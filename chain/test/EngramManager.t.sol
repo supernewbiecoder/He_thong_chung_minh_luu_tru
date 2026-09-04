@@ -121,8 +121,16 @@ contract EngramManagerTest is Test {
         m.commitEpoch(1, proof, pv);
         uint256 used = g0 - gasleft();
 
+        // CHỈ DÙNG ASCII trong chuỗi Solidity.
+        //
+        // Solidity từ chối ký tự ngoài ASCII trong chuỗi thường; phải viết
+        // unicode"..." mới được. Ký tự "§" ở đây làm cả bản dựng chết với
+        // "Error (8936): Invalid character in string".
+        //
+        // Comment thì thoải mái tiếng Việt — chỉ CHUỖI mới bị ràng buộc.
         console.log("gas commitEpoch:", used);
-        console.log("dac ta §K.1    : 487109");
+        console.log("spec K.1 target:", uint256(487109));
+        console.log("delta:", used > 487109 ? used - 487109 : 487109 - used);
         assertEq(m.lastCommittedEpoch(), 1);
         assertEq(m.currentStateRoot(), keccak256("newRoot"));
     }

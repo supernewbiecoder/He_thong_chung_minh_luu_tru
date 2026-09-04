@@ -48,10 +48,24 @@ def main() -> None:
         probe.unlink()
     except OSError as e:
         print(f"KHÔNG ghi được vào {out.resolve()}: {e}\n")
-        print("  Trong container: bind mount giữ nguyên quyền của host, mà thư mục")
-        print("  trên host thuộc người dùng khác uid trong ảnh.")
-        print("  Sửa:  make sim   (Makefile tự truyền DOCKER_UID/DOCKER_GID)")
-        print(f"  Hoặc: chmod 777 results/   rồi chạy lại")
+        # Chẩn đoán thay vì đoán. Hai nguyên nhân khác nhau, hai cách sửa khác
+        # nhau, và gợi ý sai cách thì người dùng chạy lệnh rồi lại thất bại.
+        try:
+            st = out.stat()
+            me = os.getuid()
+            print(f"  thư mục thuộc uid {st.st_uid}, tiến trình chạy bằng uid {me}")
+            if st.st_uid != me:
+                print()
+                print("  → KHÔNG SỞ HỮU thư mục. `chmod` sẽ bị từ chối. Phải đổi chủ:")
+                print(f"      sudo chown -R $(id -u):$(id -g) {out}")
+                print()
+                print("  Thường do một lần chạy Docker TRƯỚC ĐÂY tạo thư mục bằng root.")
+            else:
+                print()
+                print("  → Sở hữu nhưng thiếu quyền ghi:")
+                print(f"      chmod u+rwx {out}")
+        except OSError:
+            print("  không đọc được thông tin thư mục — kiểm bằng:  ls -ld " + str(out))
         raise SystemExit(2)
 
     print(f"═══ Engram · mô phỏng · {a.deals} hợp đồng · {a.shards} mảnh · {a.epochs} epoch ═══\n")

@@ -2,7 +2,7 @@
 #  Engram — lệnh thường dùng
 #  [CHỐT A1-b · A2-c · A3-a · C3-a]
 # ═══════════════════════════════════════════════════════════════════════════
-.PHONY: preflight help build sim deploy reset sim-mocha down logs test test-py test-sol gas clean fmt
+.PHONY: preflight help build sim deploy reset check-sol sim-mocha down logs test test-py test-sol gas clean fmt
 
 CHAIN_MODE ?= local
 export DOCKER_UID := $(shell id -u)
@@ -19,15 +19,26 @@ help:            ## Danh sách lệnh
 build:           ## Xây mọi ảnh Docker
 	docker compose build
 
+# `--build` là BẮT BUỘC, không phải tuỳ chọn.
+#
+# Thiếu nó thì sau `git pull` container vẫn chạy MÃ CŨ trong ảnh đã dựng, và
+# mọi bản sửa trông như không có tác dụng. Triệu chứng đặc trưng: traceback trỏ
+# vào số dòng KHÔNG khớp với tệp trên đĩa, và thông điệp lỗi mới không in ra.
+#
+# `mkdir -p results` để thư mục tồn tại và thuộc người gọi TRƯỚC khi Docker
+# mount. Nếu để Docker tự tạo, nó tạo bằng root và bind mount thành chỉ-đọc với
+# uid trong container.
 sim: preflight   ## Chạy mô phỏng, chế độ local (không cần mạng ngoài)
+	@mkdir -p results
 	CHAIN_MODE=local N_DEALS=$(N_DEALS) N_EPOCHS=$(N_EPOCHS) \
-	docker compose --profile local up --abort-on-container-exit orchestrator
+	docker compose --profile local up --build --abort-on-container-exit orchestrator
 
 deploy:          ## Biên dịch và deploy hợp đồng lên anvil trong container
 	docker compose --profile local --profile chain up --abort-on-container-exit deployer
 
 sim-mocha:       ## Chạy trên Celestia Mocha + Anvil
-	CHAIN_MODE=mocha-anvil docker compose up --abort-on-container-exit orchestrator
+	@mkdir -p results
+	CHAIN_MODE=mocha-anvil docker compose up --build --abort-on-container-exit orchestrator
 
 reset:           ## Dọn sạch rồi chạy lại từ đầu
 	-docker compose --profile local --profile chain down -v --remove-orphans
@@ -60,7 +71,10 @@ run:             ## Chạy mô phỏng TRONG TIẾN TRÌNH — không cần Dock
 	PYTHONPATH=$(PYPATH) python3 -m orchestrator \
 		--deals $(N_DEALS) --epochs $(N_EPOCHS) --shards 2
 
-test-sol:        ## Test hợp đồng
+check-sol:       ## Kiểm chuỗi Solidity chỉ dùng ASCII
+	@python3 chain/check_ascii.py
+
+test-sol: check-sol  ## Test hợp đồng
 	cd chain && forge test -vv
 
 gas:             ## Đo gas, đối chiếu 487.109 trong §K.1

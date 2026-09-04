@@ -94,7 +94,9 @@ Kết quả ra `results/epochs.csv`, 9 dòng.
 | Triệu chứng | Nguyên nhân | Xử lý |
 |---|---|---|
 | `ModuleNotFoundError: fastapi` | chỉ ảnh hưởng `provider.api`, không ảnh hưởng `make check` | bỏ qua ở bước này |
-| `PermissionError: /results/epochs.csv` | bind mount giữ quyền của host; uid trong ảnh khác uid trên máy | dùng `make sim` (tự truyền `DOCKER_UID`), đừng gọi `docker compose up` trực tiếp |
+| `PermissionError: /results/epochs.csv` | bind mount giữ quyền của host; uid trong ảnh khác uid trên máy | dùng `make sim` (tự truyền `DOCKER_UID` và `--build`), đừng gọi `docker compose up` trực tiếp |
+| Sửa mã rồi mà lỗi **y hệt cũ** | ảnh Docker chưa dựng lại — container chạy mã cũ | `make sim` đã có `--build`. Dấu hiệu nhận biết: **số dòng trong traceback không khớp tệp trên đĩa** |
+| `chmod: Operation not permitted` trên `results/` | thư mục thuộc **root**, do lần chạy Docker trước khi có bản vá `user:` | `sudo chown -R $(id -u):$(id -g) results` |
 | preflight báo cổng bị chiếm | xem dòng có mũi tên `←` — nó **chỉ đích danh** ai giữ | `container cũ của mình` → `make down`. `container khác` hoặc `tiến trình` → đổi cổng |
 | không rõ ai giữ cổng | preflight không xác định được | `bash scripts/whoholds.sh 18201` hoặc `sudo ss -ltnp \| grep 18201` |
 | test `test_spec_consistency` LỖI | mã và đặc tả lệch nhau | **dừng lại**, đừng nới ngưỡng test — đọc thông điệp lỗi, một trong hai bên sai |
@@ -210,6 +212,7 @@ Chạy:
 ```bash
 cd ~/engram-sim/chain
 forge install foundry-rs/forge-std --no-git
+python3 check_ascii.py     # chuỗi Solidity phải là ASCII — xem bảng lỗi bên dưới
 forge build
 forge test -vv
 forge test --gas-report
@@ -226,6 +229,13 @@ Tám test xanh, và trong `--gas-report` một dòng cho `commitEpoch`.
 | Vài trăm gas | bình thường — khác phiên bản solc, khác optimizer runs |
 | Vài nghìn | có phép kiểm bị thêm hoặc bớt so với §D.2 — **kiểm lại sáu bước trong `commitEpoch`** |
 | Trên 10 % | bố cục public values đã đổi — **đối chiếu `_decodePublicValues` với `clock.py`** |
+
+### Lỗi biên dịch thường gặp
+
+| Lỗi | Nguyên nhân | Sửa |
+|---|---|---|
+| `Error (8936): Invalid character in string` | ký tự ngoài ASCII trong **chuỗi** Solidity, ví dụ `§` | `make check-sol` chỉ ra chỗ nào. Comment thì thoải mái tiếng Việt, chỉ chuỗi mới bị ràng buộc |
+| `multiple binaries named forge` | máy đã có Foundry cài sẵn ở `~/.foundry` | vô hại nếu `forge --version` ra đúng bản trong `engram-sim/.foundry` |
 
 Ghi con số thật vào bảng §K.1 kèm phiên bản solc và optimizer runs. Đừng để con
 số cũ nếu đo được khác.

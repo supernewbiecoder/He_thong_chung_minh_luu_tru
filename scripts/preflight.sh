@@ -131,6 +131,23 @@ else
 fi
 
 echo
+echo "── Thư mục kết quả ──"
+#
+# Lần chạy Docker trước khi có bản vá `user:` tạo ./results bằng ROOT. Sau đó
+# người dùng không chmod được (không sở hữu), và mô phỏng hỏng ở bước ghi tệp.
+# Bắt ở đây thì thấy trước khi chạy, thay vì sau khi đã chạy xong.
+RES="$HERE/results"
+if [ ! -e "$RES" ]; then
+  ok "results/ (sẽ tạo khi chạy)"
+elif [ -w "$RES" ]; then
+  ok "results/ ghi được"
+else
+  OWNER=$(stat -c '%U' "$RES" 2>/dev/null || echo '?')
+  bad "results/ KHÔNG ghi được — thuộc '$OWNER', bạn là '$(id -un)'"
+  echo "        sudo chown -R \$(id -u):\$(id -g) $RES"
+fi
+
+echo
 echo "── Tài nguyên ──"
 FREE_G=$(df -BG --output=avail "$HERE" 2>/dev/null | tail -1 | tr -dc '0-9')
 say "đĩa trống" "${FREE_G:-?} GiB (cần ~3 GiB cho ảnh Docker)"
