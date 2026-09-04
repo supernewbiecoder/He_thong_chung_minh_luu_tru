@@ -36,8 +36,7 @@ RUN test -n "$SERVICE" || (echo "THIEU build-arg SERVICE" && exit 1)
 COPY ${SERVICE}/pyproject.toml /app/${SERVICE}/
 RUN pip install --no-cache-dir -e /app/${SERVICE} || true
 
-COPY ${SERVICE}/src /app/${SERVICE}/src
-COPY ${SERVICE}/tests /app/${SERVICE}/tests
+COPY ${SERVICE}/ /app/${SERVICE}/
 RUN pip install --no-cache-dir -e /app/${SERVICE}
 
 # Ghi tên dịch vụ vào ảnh để entrypoint biết chạy gì mà không cần truyền lại.
