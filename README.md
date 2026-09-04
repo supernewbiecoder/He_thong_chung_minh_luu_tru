@@ -49,6 +49,11 @@ sang Celestia Mocha là **bắt buộc**: chỉ ở đó mới kiểm được r
 nhịp, và quan trọng nhất là việc đồng thuận Celestia thật sự áp đặt trường
 `signer` — nền của §J.2.1.
 
+## Bắt đầu ở đâu
+
+**`docs/HUONG_DAN.md`** — năm bước, từ con số 0, cô lập hoàn toàn với những gì
+đã có trên máy chủ. Bước 1 không cần Docker, không cần mạng.
+
 ## Chạy trên máy chủ dùng chung
 
 `node-blockchain` đang chạy celestia-node, sp1-blobstream, orchestrator-relayer,

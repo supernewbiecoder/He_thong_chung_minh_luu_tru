@@ -30,7 +30,7 @@ from engram_common.verdict import Verdict, reconcile
 
 @dataclass
 class ReconcileStats:
-    cells_seen: int = 0
+    childproofs_seen: int = 0
     conflicts: int = 0
     upgraded_from_none: int = 0
     upgraded_to_pass: int = 0
@@ -41,6 +41,18 @@ class EpochVerdicts:
     """Phán quyết đã hoà giải cho cả epoch."""
 
     verdicts: dict[tuple[bytes, bytes], Verdict] = field(default_factory=dict)
+    covered_cells: set[tuple[int, int]] = field(default_factory=set)
+    """Tập ô (deadline, mảnh) có ÍT NHẤT MỘT ChildProof.
+
+    ── PHÂN BIỆT PHỦ ĐẦY ĐỦ VỚI DƯ THỪA ────────────────────────────────────
+
+    Đếm SỐ BẢN ChildProof là sai. Với r=2, một worker chết thì ô vẫn được phủ
+    bởi worker còn lại — đó chính là điều dư thừa sinh ra để làm. Nếu phép kiểm
+    đòi đủ r bản thì MỘT worker chết là void cả epoch, và r=2 thành vô dụng.
+
+    Phủ đầy đủ hỏi: "mọi ô có ít nhất một ChildProof không?" — câu hỏi AN TOÀN.
+    Dư thừa hỏi: "có mấy bản?" — câu hỏi TÍNH SỐNG. Hai câu khác nhau."""
+
     covered_shards: set[int] = field(default_factory=set)
     stats: ReconcileStats = field(default_factory=ReconcileStats)
 
@@ -49,7 +61,8 @@ def reconcile_shard_results(results: list) -> EpochVerdicts:
     """Gộp nhiều ShardResult, kể cả nhiều bản của cùng một ô, theo sức nặng bằng cớ."""
     out = EpochVerdicts()
     for res in results:
-        out.stats.cells_seen += 1
+        out.stats.childproofs_seen += 1
+        out.covered_cells.add((res.deadline, res.shard))
         out.covered_shards.add(res.shard)
         for key, v in res.verdicts.items():
             prev = out.verdicts.get(key)

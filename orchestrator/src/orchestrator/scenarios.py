@@ -71,14 +71,17 @@ def run_deadline(net: SimNetwork, epoch: int, d_idx: int, attack_target=None, n_
 def run_epoch(net: SimNetwork, epoch: int, **kw) -> dict[str, Any]:
     """KB-04 — cam kết cả epoch."""
     all_results = []
+    expected_cells: set[tuple[int, int]] = set()
     for d in range(PROFILE_SIM.deadlines_per_epoch):
+        slot = net.clock.slot_at(epoch, d)
+        for s in range(net.n_shards):
+            expected_cells.add((slot.absolute_deadline, s))
         all_results += run_deadline(net, epoch, d, **kw)
 
     try:
         pv, proof, leaves = aggregate_epoch(
             epoch=epoch, chain_id=net.chain_id, shard_results=all_results,
-            expected_shards=set(range(net.n_shards)),
-            expected_deadlines=PROFILE_SIM.deadlines_per_epoch * 2,  # r=2 bản mỗi ô
+            expected_cells=expected_cells,
             prev_state_root=bytes(32), da_commitment=b"\xda" * 32, da_nonce=812,
             submitter=b"\x7e" * 20, storage_vk_digest=b"\x05" * 32, snapshot_id=b"\x06" * 32,
         )

@@ -68,8 +68,7 @@ def aggregate_epoch(
     epoch: int,
     chain_id: int,
     shard_results: list,
-    expected_shards: set[int],
-    expected_deadlines: int,
+    expected_cells: set[tuple[int, int]],
     prev_state_root: bytes,
     da_commitment: bytes,
     da_nonce: int,
@@ -83,14 +82,16 @@ def aggregate_epoch(
     ev: EpochVerdicts = reconcile_shard_results(shard_results)
 
     # [CHỐT B4-a] Phủ đầy đủ ở TẦNG AGGREGATOR.
+    #
+    # Kiểm theo Ô, không theo SỐ BẢN. Với r=2, một worker chết thì ô vẫn được
+    # phủ bởi worker còn lại — đó chính là điều dư thừa sinh ra để làm. Đòi đủ
+    # r bản là làm lẫn lộn AN TOÀN với TÍNH SỐNG, và biến một worker chết thành
+    # void cả epoch.
     if require_full_coverage:
-        missing = expected_shards - ev.covered_shards
-        expected_cells = len(expected_shards) * expected_deadlines
+        missing = expected_cells - ev.covered_cells
         if missing:
-            raise CoverageGapError(f"thiếu ChildProof của mảnh {sorted(missing)}")
-        if ev.stats.cells_seen < expected_cells:
             raise CoverageGapError(
-                f"thiếu ChildProof: thấy {ev.stats.cells_seen}, cần {expected_cells}"
+                f"thiếu ChildProof cho {len(missing)} ô: {sorted(missing)[:3]}…"
             )
 
     # Guest TỰ TÍNH results_root từ biến verdict — không nhận từ host.
