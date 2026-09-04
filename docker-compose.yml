@@ -229,6 +229,12 @@ services:
       # [CHỐT C2-b] Quét ba giá trị c_sha thay vì chốt một. Biến ẩn số thành
       # phân tích độ nhạy, và cho biết phép đo thật cần rơi dưới mức nào.
       SHA256_SWEEP: "1000,5000,20000"
+      # PHẢI đặt tường minh. Mặc định của mã là "results" — đường dẫn TƯƠNG ĐỐI,
+      # nên trong container nó thành /app/results, KHÔNG phải volume đã mount.
+      # Thiếu dòng này thì mô phỏng chạy xong, in "→ results/epochs.csv", rồi
+      # container thoát và CSV biến mất cùng nó. Hỏng lặng lẽ: exit code 0, mọi
+      # con số in ra đúng, mà không có tệp nào ở ngoài.
+      RESULTS_DIR: /results
     volumes:
       - shared:/shared
       - ./results:/results

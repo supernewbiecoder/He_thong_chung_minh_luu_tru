@@ -94,7 +94,10 @@ def main() -> None:
     for cpu in (0.005, 0.04):
         print(f"  biên dựng lại ở {cpu:.3f} $/giờ CPU  : {regen_economics(cpu_usd_per_hour=cpu).margin:>9,.0f}×")
     print(f"  gian 1.000 hợp đồng cần            : {capacity_bound_cores(1000):.1f} nhân 24/24")
-    print(f"\n  → {out/'epochs.csv'}")
+    # In đường dẫn TUYỆT ĐỐI. Đường dẫn tương đối làm người dùng tưởng tệp nằm
+    # ở thư mục hiện tại, trong khi ở container nó nằm ở /app — và mất khi
+    # container thoát nếu không mount đúng chỗ.
+    print(f"\n  → {(out / 'epochs.csv').resolve()}")
 
 
 if __name__ == "__main__":
