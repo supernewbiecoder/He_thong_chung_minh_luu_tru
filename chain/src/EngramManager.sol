@@ -157,8 +157,27 @@ contract EngramManager {
     ═══════════════════════════════════════════════════════════════════════*/
 
     mapping(address => StorageProvider) public providers;
-    mapping(bytes32 => StorageDeal) public deals;
     mapping(uint64 => EpochRecord) public epochs;
+
+    /// `internal` chứ KHÔNG `public`, và có getter viết tay ở dưới.
+    ///
+    /// ── VÌ SAO ──────────────────────────────────────────────────────────
+    ///
+    /// `StorageDeal` có 17 trường. Getter mà Solidity TỰ SINH cho một mapping
+    /// public phải trả về đủ 17 giá trị rời, mà EVM chỉ truy cập được 16 khe
+    /// trên stack. Kết quả: "Stack too deep" — và lỗi đó KHÔNG chỉ vào dòng
+    /// nào trong mã, vì hàm gây ra nó không do người viết.
+    ///
+    /// Dấu hiệu nhận biết: rỗng hoá TẤT CẢ thân hàm mà vẫn tràn.
+    ///
+    /// Getter viết tay trả về cả struct trong bộ nhớ — một khe stack duy nhất,
+    /// và chỗ gọi đọc theo TÊN trường thay vì theo thứ tự, nên thêm bớt trường
+    /// sau này không âm thầm làm hỏng bên gọi.
+    mapping(bytes32 => StorageDeal) internal _deals;
+
+    function deals(bytes32 dealId) external view returns (StorageDeal memory) {
+        return _deals[dealId];
+    }
 
     /// Chống rút hai lần. [SPEC §I.1.1]
     mapping(bytes32 => bool) public settlementClaimed;
@@ -278,21 +297,36 @@ contract EngramManager {
         ③ đổi được hàm niêm phong mà không đụng phía khách
     ═══════════════════════════════════════════════════════════════════════*/
 
-    function openDeal(
-        bytes32 dealId,
-        address provider,
-        bytes32 pieceRoot,
-        uint64 pieceSizeReal,
-        uint256 pricePerEpochWei,
-        uint64 durationEpochs,
-        uint8 deadlineIdx,
-        uint32 shard,
-        bytes32 activationBeacon,
-        uint256 sealingFeeWei
-    ) external payable {
-        if (deals[dealId].state != DealState.None) revert DealExists();
+    /// Tham số gom vào struct thay vì 10 đối số rời.
+    ///
+    /// KHÔNG phải cho đẹp. Với 10 đối số cộng việc dựng `StorageDeal` 17 trường,
+    /// trình biên dịch hết chỗ trên stack EVM (16 khe truy cập được) và báo
+    /// "Stack too deep". Hai cách chữa:
+    ///
+    ///   ① bật viaIR — chữa được, nhưng ĐỔI SỐ GAS và làm biên dịch chậm hẳn.
+    ///      Với bài báo lấy gas làm con số trung tâm thì đổi codegen là đổi
+    ///      chính thứ đang đo.
+    ///   ② gom tham số — giảm áp lực stack, giữ nguyên codegen, và tiện hơn ở
+    ///      chỗ gọi vì không còn nhầm thứ tự 10 đối số cùng kiểu số.
+    ///
+    /// Chọn ②.
+    struct DealParams {
+        bytes32 dealId;
+        address provider;
+        bytes32 pieceRoot;
+        uint64 pieceSizeReal;
+        uint256 pricePerEpochWei;
+        uint64 durationEpochs;
+        uint8 deadlineIdx;
+        uint32 shard;
+        bytes32 activationBeacon;
+        uint256 sealingFeeWei;
+    }
 
-        StorageProvider storage p = providers[provider];
+    function openDeal(DealParams calldata q) external payable {
+        if (_deals[q.dealId].state != DealState.None) revert DealExists();
+
+        StorageProvider storage p = providers[q.provider];
         if (p.capacitySlots == 0) revert NotProvider();
         if (p.usedSlots >= p.capacitySlots) revert NoFreeSlots();
 
@@ -302,31 +336,30 @@ contract EngramManager {
             revert InsufficientCollateral();
         }
 
-        uint256 escrow = pricePerEpochWei * durationEpochs;
-        require(msg.value == escrow + sealingFeeWei, "so tien khong khop");
+        uint256 escrow = q.pricePerEpochWei * q.durationEpochs;
+        require(msg.value == escrow + q.sealingFeeWei, "so tien khong khop");
 
-        deals[dealId] = StorageDeal({
-            customer: msg.sender,
-            provider: provider,
-            pieceRoot: pieceRoot,
-            sealedRoot: bytes32(0),
-            activationBeacon: activationBeacon,
-            pieceSizeReal: pieceSizeReal,
-            slotIdx: uint32(p.usedSlots),
-            deadlineIdx: deadlineIdx,
-            shard: shard,
-            pricePerEpochWei: pricePerEpochWei,
-            escrowWei: escrow,
-            sealingFeeWei: sealingFeeWei,
-            sealingFeeReleased: false,
-            startEpoch: lastCommittedEpoch + 1,
-            endEpoch: lastCommittedEpoch + 1 + durationEpochs,
-            openedAtDeadline: 0,
-            state: DealState.Pending
-        });
+        // Ghi qua con trỏ storage, từng trường một. Dựng cả struct trong bộ nhớ
+        // rồi gán một lần cũng đúng, nhưng nó giữ 17 giá trị sống cùng lúc và
+        // đó chính là thứ đẩy stack quá giới hạn.
+        StorageDeal storage d = _deals[q.dealId];
+        d.customer = msg.sender;
+        d.provider = q.provider;
+        d.pieceRoot = q.pieceRoot;
+        d.activationBeacon = q.activationBeacon;
+        d.pieceSizeReal = q.pieceSizeReal;
+        d.slotIdx = uint32(p.usedSlots);
+        d.deadlineIdx = q.deadlineIdx;
+        d.shard = q.shard;
+        d.pricePerEpochWei = q.pricePerEpochWei;
+        d.escrowWei = escrow;
+        d.sealingFeeWei = q.sealingFeeWei;
+        d.startEpoch = lastCommittedEpoch + 1;
+        d.endEpoch = lastCommittedEpoch + 1 + q.durationEpochs;
+        d.state = DealState.Pending;
+
         p.usedSlots += 1;
-
-        emit DealOpened(dealId, msg.sender, provider, deadlineIdx, shard);
+        emit DealOpened(q.dealId, msg.sender, q.provider, q.deadlineIdx, q.shard);
     }
 
     /// [SPEC UC-02 bước ⑤] Nút đăng ký gốc niêm phong.
@@ -336,7 +369,7 @@ contract EngramManager {
     /// mở 1.000 hợp đồng rồi bỏ, nút đốt 1.280 giờ CPU còn khách tốn ~1 $ và lấy
     /// lại toàn bộ ký quỹ.
     function registerSealed(bytes32 dealId, bytes32 sealedRoot, bytes32 newProviderRoot) external {
-        StorageDeal storage d = deals[dealId];
+        StorageDeal storage d = _deals[dealId];
         if (d.state != DealState.Pending) revert WrongState();
         if (msg.sender != d.provider) revert NotProvider();
 
@@ -362,7 +395,7 @@ contract EngramManager {
     /// ra R_j, S_j dưới sealed_root. Trong R1CS, C_j là MỘT biến, nên prover
     /// không thể dùng giá trị thật ở chỗ này và giá trị rác ở chỗ kia.
     function activate(bytes32 dealId, bytes calldata proof, bytes calldata publicValues) external {
-        StorageDeal storage d = deals[dealId];
+        StorageDeal storage d = _deals[dealId];
         if (d.state != DealState.Pending) revert WrongState();
         if (d.sealedRoot == bytes32(0)) revert WrongState();
 
@@ -375,7 +408,7 @@ contract EngramManager {
     /// [SPEC UC-02 A3] Nút không đăng ký sealed_root trong hạn → ai gọi cũng được.
     /// Khách lấy lại TOÀN BỘ ký quỹ. Phí niêm phong chưa mở khoá nên cũng về khách.
     function abortDeal(bytes32 dealId, uint64 currentDeadline) external {
-        StorageDeal storage d = deals[dealId];
+        StorageDeal storage d = _deals[dealId];
         if (d.state != DealState.Pending) revert WrongState();
         if (currentDeadline < d.openedAtDeadline + ABORT_AFTER_DEADLINES) revert AbortTooEarly();
 

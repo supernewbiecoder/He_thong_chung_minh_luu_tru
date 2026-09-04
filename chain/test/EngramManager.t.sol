@@ -92,7 +92,18 @@ contract EngramManagerTest is Test {
 
         vm.prank(customer);
         m.openDeal{value: escrow + fee}(
-            DEAL, provider, keccak256("piece"), 1024, 1e12, 10, 3, 11, keccak256("beacon"), fee
+            EngramManager.DealParams({
+                dealId: DEAL,
+                provider: provider,
+                pieceRoot: keccak256("piece"),
+                pieceSizeReal: 1024,
+                pricePerEpochWei: 1e12,
+                durationEpochs: 10,
+                deadlineIdx: 3,
+                shard: 11,
+                activationBeacon: keccak256("beacon"),
+                sealingFeeWei: fee
+            })
         );
 
         uint256 before = provider.balance;
