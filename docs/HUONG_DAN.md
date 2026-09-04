@@ -94,6 +94,7 @@ Kết quả ra `results/epochs.csv`, 9 dòng.
 | Triệu chứng | Nguyên nhân | Xử lý |
 |---|---|---|
 | `ModuleNotFoundError: fastapi` | chỉ ảnh hưởng `provider.api`, không ảnh hưởng `make check` | bỏ qua ở bước này |
+| `PermissionError: /results/epochs.csv` | bind mount giữ quyền của host; uid trong ảnh khác uid trên máy | dùng `make sim` (tự truyền `DOCKER_UID`), đừng gọi `docker compose up` trực tiếp |
 | preflight báo cổng bị chiếm | xem dòng có mũi tên `←` — nó **chỉ đích danh** ai giữ | `container cũ của mình` → `make down`. `container khác` hoặc `tiến trình` → đổi cổng |
 | không rõ ai giữ cổng | preflight không xác định được | `bash scripts/whoholds.sh 18201` hoặc `sudo ss -ltnp \| grep 18201` |
 | test `test_spec_consistency` LỖI | mã và đặc tả lệch nhau | **dừng lại**, đừng nới ngưỡng test — đọc thông điệp lỗi, một trong hai bên sai |

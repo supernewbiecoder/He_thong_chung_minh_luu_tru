@@ -221,6 +221,15 @@ services:
       context: .
       dockerfile: Dockerfile.harness
       args: {SERVICE: orchestrator}
+    # Chạy bằng UID/GID của người gọi, không phải uid 10001 trong ảnh.
+    #
+    # VÌ SAO: bind mount ./results:/results GIỮ NGUYÊN quyền của host. Thư mục
+    # đó thuộc `ubuntu` (uid 1000), nên uid 10001 ghi vào là PermissionError.
+    #
+    # Chạy bằng root thì ghi được, nhưng tệp sinh ra thuộc root và người dùng
+    # phải sudo mới xoá nổi kết quả của chính mình. Dùng uid người gọi là cách
+    # duy nhất vừa ghi được vừa để tệp đúng chủ.
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     environment:
       <<: *py-env
       N_DEALS: ${N_DEALS:-20}          # [CHỐT C3-a]

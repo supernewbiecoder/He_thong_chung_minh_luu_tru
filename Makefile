@@ -5,6 +5,8 @@
 .PHONY: preflight help build sim deploy reset sim-mocha down logs test test-py test-sol gas clean fmt
 
 CHAIN_MODE ?= local
+export DOCKER_UID := $(shell id -u)
+export DOCKER_GID := $(shell id -g)
 N_DEALS    ?= 20
 N_EPOCHS   ?= 3
 

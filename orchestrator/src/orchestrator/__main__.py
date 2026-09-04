@@ -34,6 +34,26 @@ def main() -> None:
     ap.add_argument("--out", default=os.getenv("RESULTS_DIR", "results"))
     a = ap.parse_args()
 
+    # Kiểm quyền ghi TRƯỚC khi chạy, không phải sau.
+    #
+    # Bản trước chạy hết mô phỏng rồi mới ghi tệp, nên PermissionError xuất hiện
+    # ở cuối — sau khi đã in ra mọi kết quả đúng. Người dùng thấy số liệu, tưởng
+    # xong, rồi container thoát với mã 1. Hỏng ở bước cuối cùng là loại hỏng tốn
+    # nhất: mất toàn bộ công đã làm.
+    out = Path(a.out)
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        probe = out / ".write_test"
+        probe.touch()
+        probe.unlink()
+    except OSError as e:
+        print(f"KHÔNG ghi được vào {out.resolve()}: {e}\n")
+        print("  Trong container: bind mount giữ nguyên quyền của host, mà thư mục")
+        print("  trên host thuộc người dùng khác uid trong ảnh.")
+        print("  Sửa:  make sim   (Makefile tự truyền DOCKER_UID/DOCKER_GID)")
+        print(f"  Hoặc: chmod 777 results/   rồi chạy lại")
+        raise SystemExit(2)
+
     print(f"═══ Engram · mô phỏng · {a.deals} hợp đồng · {a.shards} mảnh · {a.epochs} epoch ═══\n")
 
     rows = []
@@ -67,7 +87,6 @@ def main() -> None:
                       f"{r['decoys_dropped']} blob mạo danh bị loại · "
                       f"calldata {r['calldata_bytes']} B")
 
-    out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     with (out / "epochs.csv").open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader(); w.writerows(rows)
