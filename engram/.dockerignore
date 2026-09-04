@@ -1,0 +1,6 @@
+**/__pycache__
+**/.pytest_cache
+chain/out
+chain/cache
+results
+*.tar.gz

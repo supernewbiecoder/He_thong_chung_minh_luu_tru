@@ -1,0 +1,202 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Mạng mô phỏng Engram
+#
+#  [CHỐT A1-b]  epoch ~4 phút   (deadline 10 block, D=4, W=6, δ=2)
+#  [CHỐT A2-c]  ba chế độ chuỗi, mặc định `local`
+#  [CHỐT C3-a]  20 hợp đồng · 4 nút · 2 mảnh · 3 epoch
+#
+#  Chạy:
+#      make sim                    chế độ local, không cần mạng ngoài
+#      CHAIN_MODE=mocha-anvil make sim
+#      CHAIN_MODE=mocha-sepolia make sim
+#
+#  Mỗi dịch vụ là một tiến trình riêng, nói chuyện qua HTTP trên mạng nội bộ
+#  `engram`. Không có thư mục chia sẻ, không có tệp trung gian — đúng như khi
+#  triển khai thật, mỗi bên chỉ chạy đúng thư mục vai trò của mình.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: engram
+
+x-py-build: &py-build
+  context: .
+  dockerfile: Dockerfile
+
+x-py-env: &py-env
+  ENGRAM_PROFILE: ${ENGRAM_PROFILE:-sim}
+  CHAIN_MODE: ${CHAIN_MODE:-local}
+  CHAIN_RPC: http://anvil:8545
+  CELESTIA_RPC: ${CELESTIA_RPC:-http://da-mock:8080}
+  CONTRACT_ADDR_FILE: /shared/contract.addr
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+
+  # ── CHUỖI QUYẾT TOÁN ────────────────────────────────────────────────────
+  # [CHỐT A3-a] Foundry. Anvil chạy đúng EVM nên số gas là THẬT, chỉ khác ở chỗ
+  # không tốn tiền và block ra tức thì.
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:v1.0.0
+    entrypoint: ["anvil"]
+    command: ["--host", "0.0.0.0", "--block-time", "1", "--silent"]
+    ports: ["8545:8545"]
+    networks: [engram]
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  # Chạy MỘT LẦN rồi thoát: biên dịch và deploy hợp đồng, ghi địa chỉ ra /shared.
+  deployer:
+    image: ghcr.io/foundry-rs/foundry:v1.0.0
+    working_dir: /chain
+    volumes:
+      - ./chain:/chain
+      - shared:/shared
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        forge build &&
+        forge script script/Deploy.s.sol:Deploy \
+          --rpc-url http://anvil:8545 --broadcast --unlocked \
+          --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 &&
+        cp out/deployed.addr /shared/contract.addr
+    depends_on:
+      anvil: {condition: service_healthy}
+    networks: [engram]
+
+  # ── LỚP DA ──────────────────────────────────────────────────────────────
+  # [CHỐT E4] Chế độ `local` dùng da-mock, chạy HOÀN TOÀN không cần mạng.
+  #
+  # NHẮC: sau khi giai đoạn 1 xanh thì PHẢI chuyển sang Mocha để thử rớt mạng,
+  # block trễ nhịp, blob không vào được block, và — quan trọng nhất — kiểm rằng
+  # đồng thuận Celestia THẬT SỰ áp đặt trường signer, tức nền của §J.2.1.
+  # Xem docs/KIEM_THU.md giai đoạn 2.
+  da-mock:
+    build: {<<: *py-build, args: {SERVICE: da_mock}}
+    profiles: ["local"]
+    environment:
+      GENESIS_HEIGHT: "1000000"
+      BLOCK_TIME_S: "1.0"      # nén lại so với 6 s thật, để demo chạy nhanh
+    ports: ["26658:8080"]
+    networks: [engram]
+
+  # Celestia Mocha thật — dùng ở giai đoạn 2 và 3.
+  celestia:
+    image: ghcr.io/celestiaorg/celestia-node:v0.28.5-mocha
+    profiles: ["mocha"]
+    command: ["celestia", "light", "start", "--core.ip", "consensus.lunaroasis.net", "--p2p.network", "mocha"]
+    ports: ["26659:26658"]
+    networks: [engram]
+
+  # ── NÚT LƯU TRỮ ─────────────────────────────────────────────────────────
+  # Hai nút để kịch bản có nhiều hơn một lựa chọn, và để thấy phân mảnh hoạt động.
+  provider-a:
+    build: {<<: *py-build, args: {SERVICE: provider}}
+    environment:
+      <<: *py-env
+      PROVIDER_NAME: P_a
+      # [SPEC §D.1.2] Địa chỉ Celestia — NEO CHỐNG MẠO DANH BLOB (§J.2.1).
+      # Worker lọc blob theo trường signer trong share v1; kẻ ngoài không điền
+      # giả được vì đồng thuận Celestia kiểm nó trùng người ký giao dịch.
+      CELESTIA_ADDRESS: ${PROVIDER_A_CELESTIA_ADDR:-celestia1aaaa}
+    volumes: [shared:/shared]
+    depends_on: {deployer: {condition: service_completed_successfully}}
+    ports: ["8101:8080"]
+    networks: [engram]
+
+  provider-b:
+    build: {<<: *py-build, args: {SERVICE: provider}}
+    environment:
+      <<: *py-env
+      PROVIDER_NAME: P_b
+      CELESTIA_ADDRESS: ${PROVIDER_B_CELESTIA_ADDR:-celestia1bbbb}
+    volumes: [shared:/shared]
+    depends_on: {deployer: {condition: service_completed_successfully}}
+    ports: ["8102:8080"]
+    networks: [engram]
+
+  # ── WORKER ──────────────────────────────────────────────────────────────
+  # [SPEC §H.1.4] r = 2 worker mỗi mảnh. Cả hai đều chạy; hoà giải theo sức nặng
+  # bằng cớ PASS ≻ FAIL ≻ NONE, nên chỉ cần MỘT worker trung thực là phán quyết
+  # đúng thắng.
+  worker-1:
+    build: {<<: *py-build, args: {SERVICE: worker}}
+    environment: {<<: *py-env, WORKER_NAME: W_1}
+    volumes: [shared:/shared]
+    depends_on: {deployer: {condition: service_completed_successfully}}
+    ports: ["8201:8080"]
+    networks: [engram]
+
+  worker-2:
+    build: {<<: *py-build, args: {SERVICE: worker}}
+    environment: {<<: *py-env, WORKER_NAME: W_2}
+    volumes: [shared:/shared]
+    depends_on: {deployer: {condition: service_completed_successfully}}
+    ports: ["8202:8080"]
+    networks: [engram]
+
+  # ── AGGREGATOR ──────────────────────────────────────────────────────────
+  aggregator:
+    build: {<<: *py-build, args: {SERVICE: aggregator}}
+    environment:
+      <<: *py-env
+      AGGREGATOR_NAME: A_2
+      # [CHỐT B4-a] [SPEC §J.2.2] MỌI ChildProof phải lên DA và aggregator phải
+      # chứng minh phủ đầy đủ. Không có nó thì aggregator im lặng bỏ một mảnh,
+      # 13 hợp đồng nhận NONE, và nó không mất gì.
+      CHILDPROOF_DA_MANDATORY: "true"
+    volumes: [shared:/shared]
+    depends_on: {deployer: {condition: service_completed_successfully}}
+    ports: ["8301:8080"]
+    networks: [engram]
+
+  # ── KHÁCH HÀNG ──────────────────────────────────────────────────────────
+  client:
+    build: {<<: *py-build, args: {SERVICE: client}}
+    environment: {<<: *py-env, CLIENT_NAME: Chi}
+    volumes: [shared:/shared]
+    depends_on: {deployer: {condition: service_completed_successfully}}
+    ports: ["8401:8080"]
+    networks: [engram]
+
+  # ── GIÁM SÁT ────────────────────────────────────────────────────────────
+  # [SPEC §A.4.1] Từ v2, watchtower KHÔNG còn trong giả định an toàn — guest tự
+  # chứng minh phủ đầy đủ. Nó chỉ còn vai trò TÍNH SỐNG: nhắc khi aggregator im.
+  watchtower:
+    build: {<<: *py-build, args: {SERVICE: watchtower}}
+    environment: *py-env
+    volumes: [shared:/shared]
+    depends_on: {deployer: {condition: service_completed_successfully}}
+    ports: ["8501:8080"]
+    networks: [engram]
+
+  # ── ĐIỀU PHỐI MÔ PHỎNG ──────────────────────────────────────────────────
+  # KHÔNG triển khai thật. Chạy kịch bản KB-01..KB-07, thu số liệu ra CSV.
+  orchestrator:
+    build: {<<: *py-build, args: {SERVICE: orchestrator}}
+    environment:
+      <<: *py-env
+      N_DEALS: ${N_DEALS:-20}          # [CHỐT C3-a]
+      N_EPOCHS: ${N_EPOCHS:-3}
+      N_SHARDS: ${N_SHARDS:-2}
+      # [CHỐT C2-b] Quét ba giá trị c_sha thay vì chốt một. Biến ẩn số thành
+      # phân tích độ nhạy, và cho biết phép đo thật cần rơi dưới mức nào.
+      SHA256_SWEEP: "1000,5000,20000"
+    volumes:
+      - shared:/shared
+      - ./results:/results
+    depends_on:
+      provider-a: {condition: service_started}
+      worker-1: {condition: service_started}
+      aggregator: {condition: service_started}
+    networks: [engram]
+
+networks:
+  engram:
+    driver: bridge
+
+volumes:
+  # Chỉ để truyền địa chỉ hợp đồng sau khi deploy. KHÔNG dùng để truyền dữ liệu
+  # giữa các dịch vụ — dữ liệu đi qua HTTP và DA, đúng như khi chạy thật.
+  shared:

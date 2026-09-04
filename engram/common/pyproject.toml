@@ -1,0 +1,13 @@
+[project]
+name = "engram-common"
+version = "0.1.0"
+description = "Thư viện dùng chung của Engram — KHÔNG phải dịch vụ"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
