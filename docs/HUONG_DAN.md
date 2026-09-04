@@ -138,6 +138,18 @@ curl -s localhost:18301/v1/health        # aggregator
 `aggregator` phải trả `"childproof_da_mandatory": true` — tắt cờ đó là mở lại
 lỗ §J.2.2.
 
+### Chạy lại lần hai
+
+Container của lần trước vẫn còn. Đó **không phải xung đột** — preflight nhận ra
+chúng qua nhãn `com.docker.compose.project` và chỉ báo:
+
+```
+  container engram-sim-* (9 cái)                     của lần chạy trước
+  ✓ Không xung đột với ai. Còn dấu vết lần chạy trước của CHÍNH MÌNH.
+```
+
+`docker compose` tự dựng lại, cứ `make sim` tiếp. Muốn sạch hẳn thì `make down`.
+
 ### Dọn
 
 ```bash

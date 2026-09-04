@@ -12,6 +12,7 @@ set -uo pipefail
 BASE="${ENGRAM_PORT_BASE:-18000}"
 PROJECT="${COMPOSE_PROJECT_NAME:-engram-sim}"
 FAIL=0
+LEFTOVER=0
 
 say()  { printf "  %-52s %s\n" "$1" "$2"; }
 ok()   { say "$1" "OK"; }
@@ -53,15 +54,38 @@ done
 
 echo
 echo "── Tên container và mạng Docker ──"
-if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${PROJECT}-"; then
-  bad "container tiền tố ${PROJECT}-"
+#
+# PHẢI phân biệt CỦA MÌNH TỪ LẦN TRƯỚC với CỦA NGƯỜI KHÁC.
+#
+# Bản trước gộp làm một và báo XUNG ĐỘT cho chính container của mình, nên sau
+# lần chạy đầu là preflight chặn vĩnh viễn — mà `make sim` gọi preflight trước,
+# thành ra chạy được đúng một lần rồi tắc. Dương tính giả còn tệ hơn không kiểm:
+# nó dạy người dùng bỏ qua cảnh báo.
+#
+# Cách phân biệt: container do docker compose tạo mang nhãn
+# com.docker.compose.project. Trùng nhãn nghĩa là của mình.
+MINE=$(docker ps -aq --filter "label=com.docker.compose.project=${PROJECT}" 2>/dev/null | wc -l)
+OTHERS=$(docker ps -a --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}' 2>/dev/null \
+         | awk -F'\t' -v p="${PROJECT}" '$1 ~ "^"p"-" && $2 != p' | wc -l)
+
+if [ "${OTHERS:-0}" -gt 0 ]; then
+  bad "container tên ${PROJECT}-* nhưng KHÔNG phải của project này"
+elif [ "${MINE:-0}" -gt 0 ]; then
+  say "container ${PROJECT}-* ($MINE cái)" "của lần chạy trước"
+  LEFTOVER=1
 else
   ok "container tiền tố ${PROJECT}-"
 fi
-if docker network ls --format '{{.Name}}' 2>/dev/null | grep -qx "${PROJECT}_engram"; then
-  bad "mạng ${PROJECT}_engram"
-else
+
+NET_OWNER=$(docker network inspect "${PROJECT}_engram" \
+            --format '{{index .Labels "com.docker.compose.project"}}' 2>/dev/null)
+if [ -z "$NET_OWNER" ]; then
   ok "mạng ${PROJECT}_engram"
+elif [ "$NET_OWNER" = "${PROJECT}" ]; then
+  say "mạng ${PROJECT}_engram" "của lần chạy trước"
+  LEFTOVER=1
+else
+  bad "mạng ${PROJECT}_engram thuộc project khác ($NET_OWNER)"
 fi
 
 echo
@@ -96,10 +120,25 @@ if [ "$FOUND" -eq 1 ]; then
 fi
 
 echo
-if [ "$FAIL" -eq 0 ]; then
-  echo "  ✓ Không xung đột. Chạy được:  make check"
-else
-  echo "  ✗ Có xung đột. Đổi ENGRAM_PORT_BASE hoặc COMPOSE_PROJECT_NAME rồi chạy lại."
-  echo "    ví dụ:  ENGRAM_PORT_BASE=19000 bash scripts/preflight.sh"
+if [ "$FAIL" -ne 0 ]; then
+  echo "  ✗ XUNG ĐỘT THẬT — thứ của người khác đang chiếm chỗ."
+  echo
+  echo "    Đổi cổng:"
+  echo "      ENGRAM_PORT_ANVIL=19545 ENGRAM_PORT_DAMOCK=19658 \\"
+  echo "      ENGRAM_PORT_PROV_A=19101 ENGRAM_PORT_PROV_B=19102 \\"
+  echo "      ENGRAM_PORT_WORK_1=19201 ENGRAM_PORT_WORK_2=19202 \\"
+  echo "      ENGRAM_PORT_AGG=19301 ENGRAM_PORT_CLIENT=19401 \\"
+  echo "      ENGRAM_PORT_WATCH=19501 make sim"
+  echo
+  echo "    Hoặc đổi tên project:"
+  echo "      COMPOSE_PROJECT_NAME=engram-sim2 make sim"
+  exit 1
 fi
-exit $FAIL
+
+if [ "${LEFTOVER:-0}" -ne 0 ]; then
+  echo "  ✓ Không xung đột với ai. Còn dấu vết lần chạy trước của CHÍNH MÌNH."
+  echo "    Không sao — docker compose sẽ dựng lại. Muốn sạch hẳn thì:  make down"
+else
+  echo "  ✓ Không xung đột. Chạy được:  make check"
+fi
+exit 0
