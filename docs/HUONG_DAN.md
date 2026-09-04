@@ -94,7 +94,8 @@ Kết quả ra `results/epochs.csv`, 9 dòng.
 | Triệu chứng | Nguyên nhân | Xử lý |
 |---|---|---|
 | `ModuleNotFoundError: fastapi` | chỉ ảnh hưởng `provider.api`, không ảnh hưởng `make check` | bỏ qua ở bước này |
-| preflight báo XUNG ĐỘT cổng | ai đó chiếm dải 18xxx | `ENGRAM_PORT_ANVIL=19545 ENGRAM_PORT_DAMOCK=19658 make preflight` |
+| preflight báo cổng bị chiếm | xem dòng có mũi tên `←` — nó **chỉ đích danh** ai giữ | `container cũ của mình` → `make down`. `container khác` hoặc `tiến trình` → đổi cổng |
+| không rõ ai giữ cổng | preflight không xác định được | `bash scripts/whoholds.sh 18201` hoặc `sudo ss -ltnp \| grep 18201` |
 | test `test_spec_consistency` LỖI | mã và đặc tả lệch nhau | **dừng lại**, đừng nới ngưỡng test — đọc thông điệp lỗi, một trong hai bên sai |
 | `calldata 0 B` ở một epoch | có ô không được phủ | xem log, kiểm xem worker có bị đình chỉ hàng loạt không |
 

@@ -21,6 +21,31 @@ bad()  { say "$1" "XUNG ĐỘT"; FAIL=1; }
 echo "═══ Kiểm tra trước khi chạy ═══"
 echo
 echo "── Cổng ──"
+#
+# ── PHẢI CHỈ ĐÍCH DANH AI GIỮ CỔNG ────────────────────────────────────────
+#
+# Bản trước chỉ hỏi "cổng có bận không" rồi kết luận "của người khác". Sai, vì
+# thủ phạm thường gặp nhất là CONTAINER CŨ CỦA CHÍNH MÌNH từ lần chạy hỏng —
+# nó vẫn đang giữ cổng. Kết luận không có bằng chứng thì vô dụng, và tệ hơn là
+# nó gửi người dùng đi đổi cổng trong khi chỉ cần `make down`.
+#
+# Ba nguồn có thể giữ cổng, phân biệt được cả ba:
+#   ① container của project này  → dấu vết lần trước, compose sẽ dựng lại
+#   ② container của project khác → xung đột thật
+#   ③ tiến trình thường          → xung đột thật, in luôn tên tiến trình
+
+port_owner() {
+  local port="$1" c pr
+  c=$(docker ps --filter "label=com.docker.compose.project=${PROJECT}" \
+        --format '{{.Names}}|{{.Ports}}' 2>/dev/null | grep ":${port}->" | cut -d'|' -f1 | head -1)
+  [ -n "$c" ] && { echo "mine:$c"; return; }
+  c=$(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null | grep ":${port}->" | cut -d'|' -f1 | head -1)
+  [ -n "$c" ] && { echo "container:$c"; return; }
+  pr=$(ss -ltnp 2>/dev/null | grep ":${port} " | sed -n 's/.*users:((\"\([^\"]*\)\".*/\1/p' | head -1)
+  [ -n "$pr" ] && { echo "process:$pr"; return; }
+  echo "unknown:"
+}
+
 for spec in \
   "$((BASE+545)):anvil" \
   "$((BASE+658)):da-mock" \
@@ -34,7 +59,14 @@ for spec in \
 do
   port="${spec%%:*}"; name="${spec##*:}"
   if ss -ltn 2>/dev/null | grep -q ":${port} " || netstat -ltn 2>/dev/null | grep -q ":${port} "; then
-    bad "$name (cổng $port)"
+    owner="$(port_owner "$port")"
+    who="${owner#*:}"
+    case "${owner%%:*}" in
+      mine)      say "$name (cổng $port)" "container cũ của mình: $who"; LEFTOVER=1 ;;
+      container) bad "$name (cổng $port) ← container khác: $who" ;;
+      process)   bad "$name (cổng $port) ← tiến trình: $who" ;;
+      *)         bad "$name (cổng $port) ← không xác định được, chạy: sudo ss -ltnp | grep $port" ;;
+    esac
   else
     ok "$name (cổng $port)"
   fi
@@ -121,7 +153,7 @@ fi
 
 echo
 if [ "$FAIL" -ne 0 ]; then
-  echo "  ✗ CỔNG BỊ CHIẾM — thứ của người khác đang giữ cổng ta cần."
+  echo "  ✗ CỔNG BỊ CHIẾM bởi thứ KHÔNG phải của project này — xem dòng có mũi tên ←"
   echo
   echo "    Đổi cổng:"
   echo "      ENGRAM_PORT_ANVIL=19545 ENGRAM_PORT_DAMOCK=19658 \\"
@@ -136,8 +168,8 @@ if [ "$FAIL" -ne 0 ]; then
 fi
 
 if [ "${LEFTOVER:-0}" -ne 0 ]; then
-  echo "  ✓ Cổng trống. Còn dấu vết Docker lần trước — compose sẽ dựng lại."
-  echo "    Muốn sạch hẳn:  make reset"
+  echo "  ✓ Không xung đột với ai khác. Container của lần chạy trước vẫn còn."
+  echo "    compose sẽ dựng lại chúng. Muốn sạch hẳn:  make reset"
 else
   echo "  ✓ Không xung đột. Chạy được:  make check"
 fi
