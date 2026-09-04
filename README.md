@@ -44,6 +44,14 @@ Kết quả ra `results/epochs.csv`, và bảng đối chiếu với các con s�
 
     make build && make sim
 
+> **`make sim` chưa kiểm ranh giới HTTP.** Nó chạy cùng một mô phỏng trong tiến
+> trình như `make run`, chỉ khác là ở trong container — vì `orchestrator` nạp
+> trực tiếp mã của provider/worker/aggregator thay vì gọi endpoint.
+>
+> Docker hiện chứng minh: mã đóng gói được, dựng được, chạy được trong môi
+> trường sạch. Nó **chưa** chứng minh kiến trúc dịch vụ tách rời hoạt động qua
+> HTTP. Xem ghi chú đầu `Dockerfile.harness`.
+
 Xem `docs/KIEM_THU.md` — **ba giai đoạn, không nhảy cóc**. Giai đoạn 2 chuyển
 sang Celestia Mocha là **bắt buộc**: chỉ ở đó mới kiểm được rớt mạng, block trễ
 nhịp, và quan trọng nhất là việc đồng thuận Celestia thật sự áp đặt trường

@@ -124,6 +124,22 @@ make sim
 >
 > Số gas — con số thật sự quan trọng — đo ở **bước 3** bằng Foundry trên máy chủ.
 
+### Bước này chứng minh gì, và KHÔNG chứng minh gì
+
+| Chứng minh được | Chưa chứng minh |
+|---|---|
+| Mã đóng gói, dựng, chạy được trong môi trường sạch | Ranh giới HTTP giữa các dịch vụ |
+| Ảnh của provider chỉ chứa mã provider — tính độc lập là thật | Rằng dịch vụ gọi nhau qua mạng được |
+| Cấu hình tách khỏi mã, chạy được với `.env` khác nhau | Hành vi khi một dịch vụ chậm hoặc chết giữa chừng |
+
+`orchestrator` nạp **trực tiếp** mã của provider/worker/aggregator để chạy bốn
+tầng trong một tiến trình. Nó dùng `Dockerfile.harness` riêng, khác với
+`Dockerfile` của dịch vụ thật. Nghĩa là `make sim` chạy **đúng cùng mô phỏng**
+như `make run`, chỉ khác là trong container.
+
+Muốn kiểm HTTP thật thì orchestrator phải gọi endpoint thay vì import, và
+provider/worker/aggregator phải có endpoint điều khiển — **việc chưa làm**.
+
 ### Cần thấy gì
 
 Chín container lên, `orchestrator` chạy xong rồi thoát với mã 0.

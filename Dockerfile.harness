@@ -1,0 +1,62 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Dockerfile cho KHUNG MÔ PHỎNG — orchestrator, adversary
+#
+#  ── VÌ SAO PHẢI CÓ TỆP RIÊNG, VÀ NÓ THỪA NHẬN ĐIỀU GÌ ────────────────────
+#
+#  `Dockerfile` chính chỉ copy `common/` và đúng một thư mục dịch vụ. Đó là
+#  tính chất quan trọng: ảnh của provider chứa MỖI mã provider, nên lời tuyên
+#  bố "mỗi thư mục là một hệ thống chạy độc lập" là thật, kiểm được bằng cách
+#  nhìn vào ảnh.
+#
+#  Orchestrator KHÔNG có tính chất đó. Nó là khung kiểm thử: nó nạp trực tiếp
+#  mã của provider, worker, aggregator và chạy cả bốn tầng trong MỘT tiến trình.
+#
+#  ── ĐIỀU NÀY CÓ NGHĨA LÀ GÌ, NÓI THẲNG ───────────────────────────────────
+#
+#  `make sim` hiện chạy đúng cùng một mô phỏng trong tiến trình như `make run`,
+#  chỉ khác là ở trong container. Nó KHÔNG kiểm các ranh giới HTTP giữa dịch vụ.
+#
+#  Nghĩa là Docker hiện chứng minh: mã đóng gói được, dựng được, chạy được
+#  trong môi trường sạch. Nó CHƯA chứng minh kiến trúc dịch vụ tách rời hoạt
+#  động qua HTTP — muốn thế thì orchestrator phải gọi endpoint thay vì import,
+#  và provider/worker/aggregator phải có endpoint điều khiển. Đó là việc chưa làm.
+#
+#  Ghi ra đây để không ai đọc `make sim` chạy xong rồi tưởng ranh giới dịch vụ
+#  đã được kiểm.
+# ═══════════════════════════════════════════════════════════════════════════
+
+FROM python:3.11-slim
+
+ARG PIP_VERSION=24.0
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN pip install --no-cache-dir "pip==${PIP_VERSION}"
+WORKDIR /app
+
+# ── Thư viện dùng chung ───────────────────────────────────────────────────
+COPY common/pyproject.toml /app/common/
+COPY common/src /app/common/src
+RUN pip install --no-cache-dir -e /app/common
+
+# ── Mã của các dịch vụ mà khung nạp trực tiếp ─────────────────────────────
+# Đây chính là chỗ khung khác dịch vụ thật: nó cần mã của cả bốn.
+COPY provider   /app/provider
+COPY worker     /app/worker
+COPY aggregator /app/aggregator
+COPY client     /app/client
+
+# ── Khung ─────────────────────────────────────────────────────────────────
+ARG SERVICE=orchestrator
+COPY ${SERVICE} /app/${SERVICE}
+RUN pip install --no-cache-dir -e /app/${SERVICE} || true
+
+ENV ENGRAM_SERVICE=${SERVICE}
+ENV PYTHONPATH=/app/common/src:/app/provider/src:/app/worker/src:/app/aggregator/src:/app/client/src:/app/${SERVICE}/src
+
+RUN useradd --create-home --uid 10001 engram && chown -R engram:engram /app
+USER engram
+
+ENTRYPOINT ["sh", "-c", "python -m ${ENGRAM_SERVICE}"]

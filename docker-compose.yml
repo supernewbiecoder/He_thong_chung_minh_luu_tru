@@ -207,8 +207,20 @@ services:
 
   # ── ĐIỀU PHỐI MÔ PHỎNG ──────────────────────────────────────────────────
   # KHÔNG triển khai thật. Chạy kịch bản KB-01..KB-07, thu số liệu ra CSV.
+  # Dùng Dockerfile.harness, KHÔNG dùng Dockerfile chính.
+  #
+  # Khung nạp trực tiếp mã của provider/worker/aggregator để chạy cả bốn tầng
+  # trong một tiến trình, nên ảnh của nó phải chứa cả bốn. Dịch vụ thật thì
+  # ngược lại: ảnh chỉ chứa mã của chính nó, và đó là điều làm cho lời tuyên bố
+  # "mỗi thư mục là một hệ thống độc lập" kiểm được.
+  #
+  # Hệ quả phải nói thẳng: `make sim` chạy CÙNG mô phỏng trong tiến trình như
+  # `make run`, chỉ khác là trong container. Nó CHƯA kiểm ranh giới HTTP.
   orchestrator:
-    build: {<<: *py-build, args: {SERVICE: orchestrator}}
+    build:
+      context: .
+      dockerfile: Dockerfile.harness
+      args: {SERVICE: orchestrator}
     environment:
       <<: *py-env
       N_DEALS: ${N_DEALS:-20}          # [CHỐT C3-a]
