@@ -83,10 +83,17 @@ MEM_G=$(free -g 2>/dev/null | awk '/^Mem:/{print $7}')
 say "RAM khả dụng" "${MEM_G:-?} GiB (cần ~2 GiB)"
 
 echo
-echo "── Thứ CÓ SẴN trên máy này, dùng lại được ──"
-for d in celestia-node sp1-blobstream orchestrator-relayer celestia_client; do
-  [ -d "$HOME/$d" ] && say "$d" "có — dùng cho giai đoạn 2/3" || say "$d" "không thấy"
+echo "── Việc của NGƯỜI KHÁC trên máy này — KHÔNG ĐỤNG ──"
+FOUND=0
+for d in celestia-node sp1-blobstream orchestrator-relayer celestia_client engram; do
+  if [ -e "$HOME/$d" ]; then say "~/$d" "có — KHÔNG dùng lại"; FOUND=1; fi
 done
+if [ "$FOUND" -eq 1 ]; then
+  echo
+  echo "    Số đo phụ thuộc cấu hình của người khác thì KHÔNG mô tả lại được"
+  echo "    trong bài báo, và chạy đè lên là phá việc họ. Dựng riêng mọi thứ."
+  echo "    Xem docs/HUONG_DAN.md — nguyên tắc cô lập hoàn toàn."
+fi
 
 echo
 if [ "$FAIL" -eq 0 ]; then

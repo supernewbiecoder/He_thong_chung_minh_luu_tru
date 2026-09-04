@@ -6,6 +6,10 @@ solc = "0.8.24"
 optimizer = true
 optimizer_runs = 200
 gas_reports = ["EngramManager"]
+
+# Deploy.s.sol dùng vm.writeFile để ghi địa chỉ ra out/deployed.addr.
+# Foundry CHẶN mọi thao tác tệp theo mặc định, nên thiếu dòng này thì script
+# revert với "the path .. is not allowed to be accessed for write operations".
 fs_permissions = [{ access = "read-write", path = "./out" }]
 
 # [SPEC §K.1] Gas mục tiêu cho commitEpoch: 487.109

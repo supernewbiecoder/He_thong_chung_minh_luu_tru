@@ -59,20 +59,42 @@ services:
       retries: 20
 
   # Chạy MỘT LẦN rồi thoát: biên dịch và deploy hợp đồng, ghi địa chỉ ra /shared.
+  # Chạy MỘT LẦN rồi thoát. KHÔNG dịch vụ nào phụ thuộc nó — xem ghi chú dưới.
+  #
+  # [profile chain] Chỉ chạy khi gọi tường minh:
+  #     docker compose --profile local --profile chain up
+  #
+  # VÌ SAO TÁCH RA: bộ mô phỏng chạy TRONG TIẾN TRÌNH và không gọi hợp đồng.
+  # Deploy chỉ để chứng minh hợp đồng biên dịch và lên chuỗi được. Buộc mọi dịch
+  # vụ chờ nó là làm cả bản chạy hỏng vì một lý do không liên quan tới thứ bước
+  # này đang kiểm. Số gas — con số thật sự quan trọng — đo ở bước 3 bằng Foundry
+  # trên máy chủ, không đo ở đây.
   deployer:
     image: ghcr.io/foundry-rs/foundry:v1.0.0
+    profiles: ["chain"]
     working_dir: /chain
+    user: root                      # ghi được vào ./chain bind-mount
     volumes:
       - ./chain:/chain
       - shared:/shared
     entrypoint: ["sh", "-c"]
     command:
       - |
-        forge build &&
+        set -e
+        # forge-std KHÔNG nằm trong git (thư viện ngoài), phải cài lúc chạy.
+        # Thiếu nó thì `import "forge-std/Script.sol"` hỏng và forge build chết.
+        if [ ! -d lib/forge-std ]; then
+          echo "→ cài forge-std…"
+          forge install foundry-rs/forge-std --no-git
+        fi
+        echo "→ forge build…"
+        forge build
+        echo "→ deploy lên anvil…"
         forge script script/Deploy.s.sol:Deploy \
           --rpc-url http://anvil:8545 --broadcast --unlocked \
-          --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 &&
+          --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
         cp out/deployed.addr /shared/contract.addr
+        echo "→ xong: $$(cat /shared/contract.addr)"
     depends_on:
       anvil: {condition: service_healthy}
     networks: [engram]
@@ -113,7 +135,7 @@ services:
       # giả được vì đồng thuận Celestia kiểm nó trùng người ký giao dịch.
       CELESTIA_ADDRESS: ${PROVIDER_A_CELESTIA_ADDR:-celestia1aaaa}
     volumes: [shared:/shared]
-    depends_on: {deployer: {condition: service_completed_successfully}}
+    depends_on: {anvil: {condition: service_healthy}}
     ports: ["${ENGRAM_PORT_PROV_A:-18101}:8080"]
     networks: [engram]
 
@@ -124,7 +146,7 @@ services:
       PROVIDER_NAME: P_b
       CELESTIA_ADDRESS: ${PROVIDER_B_CELESTIA_ADDR:-celestia1bbbb}
     volumes: [shared:/shared]
-    depends_on: {deployer: {condition: service_completed_successfully}}
+    depends_on: {anvil: {condition: service_healthy}}
     ports: ["${ENGRAM_PORT_PROV_B:-18102}:8080"]
     networks: [engram]
 
@@ -136,7 +158,7 @@ services:
     build: {<<: *py-build, args: {SERVICE: worker}}
     environment: {<<: *py-env, WORKER_NAME: W_1}
     volumes: [shared:/shared]
-    depends_on: {deployer: {condition: service_completed_successfully}}
+    depends_on: {anvil: {condition: service_healthy}}
     ports: ["${ENGRAM_PORT_WORK_1:-18201}:8080"]
     networks: [engram]
 
@@ -144,7 +166,7 @@ services:
     build: {<<: *py-build, args: {SERVICE: worker}}
     environment: {<<: *py-env, WORKER_NAME: W_2}
     volumes: [shared:/shared]
-    depends_on: {deployer: {condition: service_completed_successfully}}
+    depends_on: {anvil: {condition: service_healthy}}
     ports: ["${ENGRAM_PORT_WORK_2:-18202}:8080"]
     networks: [engram]
 
@@ -159,7 +181,7 @@ services:
       # 13 hợp đồng nhận NONE, và nó không mất gì.
       CHILDPROOF_DA_MANDATORY: "true"
     volumes: [shared:/shared]
-    depends_on: {deployer: {condition: service_completed_successfully}}
+    depends_on: {anvil: {condition: service_healthy}}
     ports: ["${ENGRAM_PORT_AGG:-18301}:8080"]
     networks: [engram]
 
@@ -168,7 +190,7 @@ services:
     build: {<<: *py-build, args: {SERVICE: client}}
     environment: {<<: *py-env, CLIENT_NAME: Chi}
     volumes: [shared:/shared]
-    depends_on: {deployer: {condition: service_completed_successfully}}
+    depends_on: {anvil: {condition: service_healthy}}
     ports: ["${ENGRAM_PORT_CLIENT:-18401}:8080"]
     networks: [engram]
 
@@ -179,7 +201,7 @@ services:
     build: {<<: *py-build, args: {SERVICE: watchtower}}
     environment: *py-env
     volumes: [shared:/shared]
-    depends_on: {deployer: {condition: service_completed_successfully}}
+    depends_on: {anvil: {condition: service_healthy}}
     ports: ["${ENGRAM_PORT_WATCH:-18501}:8080"]
     networks: [engram]
 

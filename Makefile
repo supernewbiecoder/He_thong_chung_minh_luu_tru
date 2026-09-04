@@ -2,7 +2,7 @@
 #  Engram — lệnh thường dùng
 #  [CHỐT A1-b · A2-c · A3-a · C3-a]
 # ═══════════════════════════════════════════════════════════════════════════
-.PHONY: preflight help build sim sim-mocha down logs test test-py test-sol gas clean fmt
+.PHONY: preflight help build sim deploy sim-mocha down logs test test-py test-sol gas clean fmt
 
 CHAIN_MODE ?= local
 N_DEALS    ?= 20
@@ -20,6 +20,9 @@ build:           ## Xây mọi ảnh Docker
 sim: preflight   ## Chạy mô phỏng, chế độ local (không cần mạng ngoài)
 	CHAIN_MODE=local N_DEALS=$(N_DEALS) N_EPOCHS=$(N_EPOCHS) \
 	docker compose --profile local up --abort-on-container-exit orchestrator
+
+deploy:          ## Biên dịch và deploy hợp đồng lên anvil trong container
+	docker compose --profile local --profile chain up --abort-on-container-exit deployer
 
 sim-mocha:       ## Chạy trên Celestia Mocha + Anvil
 	CHAIN_MODE=mocha-anvil docker compose up --abort-on-container-exit orchestrator

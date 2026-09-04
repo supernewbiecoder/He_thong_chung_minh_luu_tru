@@ -1,0 +1,3 @@
+Giữ thư mục này trong git. Git không theo dõi thư mục rỗng, mà thiếu nó thì
+bản dựng Docker cũ báo "not found" — xem ghi chú trong Dockerfile.
+Test của dịch vụ watchtower đặt ở đây.

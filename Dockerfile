@@ -36,6 +36,14 @@ RUN test -n "$SERVICE" || (echo "THIEU build-arg SERVICE" && exit 1)
 COPY ${SERVICE}/pyproject.toml /app/${SERVICE}/
 RUN pip install --no-cache-dir -e /app/${SERVICE} || true
 
+# MỘT lệnh COPY cho cả thư mục dịch vụ, không tách src và tests.
+#
+# Tách ra thì `COPY ${SERVICE}/tests` HỎNG với dịch vụ chưa có test: git không
+# theo dõi thư mục rỗng, nên sau khi clone chúng biến mất, và Docker báo
+# "/aggregator/tests: not found" rồi dừng cả bản dựng.
+#
+# Copy cả thư mục thì có test hay không đều chạy được. Lớp phụ thuộc vẫn tách
+# riêng ở trên nên sửa mã dịch vụ không phải cài lại pip.
 COPY ${SERVICE}/ /app/${SERVICE}/
 RUN pip install --no-cache-dir -e /app/${SERVICE}
 

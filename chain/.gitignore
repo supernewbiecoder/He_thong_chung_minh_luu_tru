@@ -1,0 +1,5 @@
+# Thư viện ngoài, cài lúc chạy bằng `forge install`. KHÔNG đưa vào git.
+lib/
+out/
+cache/
+broadcast/

@@ -114,6 +114,16 @@ make sim
 
 `make sim` tự chạy `preflight` trước, nên không khởi động được nếu có xung đột.
 
+> **Bước này KHÔNG deploy hợp đồng.** Bộ mô phỏng chạy trong tiến trình và không
+> gọi chuỗi. Deploy chỉ để chứng minh hợp đồng biên dịch và lên chuỗi được, nên
+> nó nằm ở profile riêng:
+>
+> ```bash
+> make deploy      # tuỳ chọn — biên dịch + deploy lên anvil trong container
+> ```
+>
+> Số gas — con số thật sự quan trọng — đo ở **bước 3** bằng Foundry trên máy chủ.
+
 ### Cần thấy gì
 
 Chín container lên, `orchestrator` chạy xong rồi thoát với mã 0.
@@ -154,6 +164,8 @@ forge --version
 ```
 
 Chạy:
+
+`forge-std` **không nằm trong git** — nó là thư viện ngoài, cài lúc chạy:
 
 ```bash
 cd ~/engram-sim/chain
