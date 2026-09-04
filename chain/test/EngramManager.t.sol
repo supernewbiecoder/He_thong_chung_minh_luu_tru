@@ -5,6 +5,14 @@ import {Test, console} from "forge-std/Test.sol";
 import {EngramManager} from "../src/EngramManager.sol";
 import {MockVerifier} from "../src/mocks/MockVerifier.sol";
 import {MockBlobstream} from "../src/mocks/MockBlobstream.sol";
+// Phải import ĐÚNG interface để lấy kiểu struct.
+//
+// Bản trước khai báo một interface `IBlobstreamTypes` riêng ở cuối tệp với
+// struct y hệt. Solidity coi hai struct cùng hình dạng nhưng khác nơi khai báo
+// là HAI KIỂU KHÁC NHAU, không tự chuyển đổi được. Kết quả:
+//   "Invalid implicit conversion from IBlobstreamTypes.DataRootTuple
+//    to IBlobstream.DataRootTuple"
+import {IBlobstream} from "../src/interfaces/IBlobstream.sol";
 
 /// Test hợp đồng. Mục tiêu KHÔNG phải phủ mã tối đa, mà là kiểm ba tính chất
 /// mà bài báo tuyên bố, cộng ba lỗ hổng đã vá.
@@ -55,7 +63,15 @@ contract EngramManagerTest is Test {
 
     function test_coc_du_thi_dang_ky_duoc() public {
         _register(4);
-        (, uint256 col, uint64 cap,,,,) = m.providers(provider);
+        // StorageProvider có ĐÚNG 8 trường, và getter tự sinh trả về cả 8 —
+        // kể cả `multiaddr` kiểu string, vì Solidity chỉ bỏ qua mapping và
+        // mảng động, không bỏ qua string.
+        //
+        //   1 celestiaAddress   5 withdrawRequestedAtEpoch
+        //   2 collateralWei     6 registeredAtEpoch
+        //   3 capacitySlots     7 providerRoot
+        //   4 usedSlots         8 multiaddr
+        (, uint256 col, uint64 cap, , , , , ) = m.providers(provider);
         assertEq(cap, 4);
         assertEq(col, 4 * m.MIN_COLLATERAL_PER_SLOT());
     }
@@ -170,18 +186,12 @@ contract EngramManagerTest is Test {
         m.commitEpoch(1, new bytes(356), _pv(1, address(this), bytes32(0), m.STORAGE_VK_DIGEST()));
         blobstream.setOutage(true);
 
-        IBlobstreamTypes.DataRootTuple memory t;
-        IBlobstreamTypes.BinaryMerkleProof memory p;
+        IBlobstream.DataRootTuple memory t;
+        IBlobstream.BinaryMerkleProof memory p;
         vm.expectRevert(EngramManager.BlobstreamRejected.selector);
         m.finalizeEpoch(1, 812, t, p);
 
         // Chuỗi trạng thái VẪN tiến — đó là toàn bộ điểm của việc tách hai pha.
         assertEq(m.currentStateRoot(), keccak256("newRoot"));
     }
-}
-
-/// Bí danh kiểu để test đọc gọn.
-interface IBlobstreamTypes {
-    struct DataRootTuple { uint256 height; bytes32 dataRoot; }
-    struct BinaryMerkleProof { bytes32[] sideNodes; uint256 key; uint256 numLeaves; }
 }
