@@ -115,3 +115,56 @@ chứng minh Nova/Spartan/SP1 đúng. Nó chứng minh *giao thức xung quanh* 
 
 **Hành vi ở quy mô lớn.** 20 hợp đồng không lộ ra vấn đề của 10.000. Riêng
 NFR-05 (`D·S_ns ≤ N/20`) chỉ kiểm được bằng tính toán, không bằng chạy thử.
+
+---
+
+## Phụ lục — cài trên `node-blockchain`
+
+Máy chủ này **đang chạy việc của người khác**. Ba nguy cơ giẫm chân, và cách đã xử lý:
+
+| Nguy cơ | Đã xử lý thế nào |
+|---|---|
+| `~/engram` đã tồn tại (clone repo cũ) | Cài vào thư mục khác: `~/engram-sim` |
+| Cổng 26658 là celestia-node, 8545/8547 là EVM/nitro | Mọi cổng dời sang dải **18xxx**, đổi được qua `.env` |
+| Tên container Docker trùng | Project name `engram-sim`, mạng riêng, không dùng host network |
+
+### Cài
+
+```bash
+cd ~
+tar xzf engram_code.tar.gz
+mv engram engram-sim          # ← BẮT BUỘC, tránh đè repo cũ ~/engram
+cd engram-sim
+cp .env.example .env
+make preflight                # kiểm cổng, container, đĩa, RAM
+make check                    # đối chiếu mã ↔ đặc tả rồi chạy thử
+```
+
+`make check` **không cần Docker, không cần mạng** — chạy trong tiến trình, ~2 giây.
+Nếu preflight báo xung đột thì đổi dải cổng:
+
+```bash
+ENGRAM_PORT_ANVIL=19545 ENGRAM_PORT_DAMOCK=19658 make preflight
+```
+
+### Tin tốt — ba thứ đã có sẵn trên máy
+
+Giai đoạn 2 và 3 dễ hơn dự tính, vì hạ tầng Blobstream đã nằm sẵn ở đó:
+
+| Thư mục | Dùng cho |
+|---|---|
+| `~/celestia-node`, `~/celestia_client` | giai đoạn 2 — Celestia thật, **không cần dựng lại** |
+| `~/sp1-blobstream` | giai đoạn 3 — hợp đồng Blobstream. Lấy địa chỉ đã deploy đặt vào `BLOBSTREAM_ADDR` |
+| `~/orchestrator-relayer` | giai đoạn 3 — relayer đẩy `DataRootTupleRoot` lên EVM |
+
+Nghĩa là **có thể bỏ qua phần khó nhất của giai đoạn 3**: không phải tự deploy Blobstream
+và tự chạy relayer. Chỉ cần trỏ `CHAIN_MODE=mocha-sepolia` vào những gì đang chạy.
+
+**Kiểm trước khi dùng:** relayer có đang chạy và cập nhật nonce đều không? Nếu nó dừng thì
+`finalizeEpoch` sẽ treo — và đó chính là kịch bản sự cố ở giai đoạn 2, nên dù sao cũng phải thử.
+
+### Đừng làm
+
+- **Đừng** `docker compose down -v` ở `~` — có `docker-compose.yml.save` của việc khác
+- **Đừng** chạy `make sim` khi chưa qua `make preflight`
+- **Đừng** đặt thư mục tên `engram` — sẽ đè repo đã clone

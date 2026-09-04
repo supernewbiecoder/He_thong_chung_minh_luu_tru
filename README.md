@@ -49,8 +49,19 @@ sang Celestia Mocha là **bắt buộc**: chỉ ở đó mới kiểm được r
 nhịp, và quan trọng nhất là việc đồng thuận Celestia thật sự áp đặt trường
 `signer` — nền của §J.2.1.
 
+## Chạy trên máy chủ dùng chung
+
+`node-blockchain` đang chạy celestia-node, sp1-blobstream, orchestrator-relayer,
+nitro/orbit và các stack dal-*. **Giải nén thành `~/engram-sim`, KHÔNG phải
+`~/engram`** — thư mục đó đã có repo cũ.
+
+    make preflight    # kiểm cổng, container, đĩa, RAM  ← chạy trước tiên
+
+Chi tiết ở `docs/KIEM_THU.md` phụ lục.
+
 ## Lệnh
 
+    make preflight    # kiểm xung đột trên máy chung
     make check        # đối chiếu mã ↔ đặc tả, rồi chạy thử  ← chạy cái này trước
     make run          # mô phỏng trong tiến trình, ~2 giây
     make test-py      # bốn bộ test

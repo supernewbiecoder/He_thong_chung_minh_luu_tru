@@ -1,6 +1,18 @@
 # ═══════════════════════════════════════════════════════════════════════════
 #  Mạng mô phỏng Engram
 #
+#  ── CHẠY TRÊN MÁY CHỦ DÙNG CHUNG ─────────────────────────────────────────
+#
+#  node-blockchain đang chạy celestia-node, sp1-blobstream, orchestrator-relayer,
+#  nitro/orbit và các stack dal-*. Ba biện pháp tránh giẫm chân:
+#
+#    ① Tên project `engram-sim`, KHÁC thư mục ~/engram (repo cũ đã clone)
+#    ② Cổng dời sang dải 18xxx, tránh 26658 (celestia-node) và 8545/8547 (EVM)
+#    ③ Mạng Docker riêng, không dùng host network
+#
+#  CHẠY `bash scripts/preflight.sh` TRƯỚC. Nó kiểm cổng, tên container, đĩa,
+#  và báo thứ nào của người khác đang chạy để mình tránh.
+#
 #  [CHỐT A1-b]  epoch ~4 phút   (deadline 10 block, D=4, W=6, δ=2)
 #  [CHỐT A2-c]  ba chế độ chuỗi, mặc định `local`
 #  [CHỐT C3-a]  20 hợp đồng · 4 nút · 2 mảnh · 3 epoch
@@ -15,7 +27,7 @@
 #  triển khai thật, mỗi bên chỉ chạy đúng thư mục vai trò của mình.
 # ═══════════════════════════════════════════════════════════════════════════
 
-name: engram
+name: ${COMPOSE_PROJECT_NAME:-engram-sim}
 
 x-py-build: &py-build
   context: .
@@ -38,7 +50,7 @@ services:
     image: ghcr.io/foundry-rs/foundry:v1.0.0
     entrypoint: ["anvil"]
     command: ["--host", "0.0.0.0", "--block-time", "1", "--silent"]
-    ports: ["8545:8545"]
+    ports: ["${ENGRAM_PORT_ANVIL:-18545}:8545"]
     networks: [engram]
     healthcheck:
       test: ["CMD", "cast", "block-number", "--rpc-url", "http://127.0.0.1:8545"]
@@ -78,7 +90,7 @@ services:
     environment:
       GENESIS_HEIGHT: "1000000"
       BLOCK_TIME_S: "1.0"      # nén lại so với 6 s thật, để demo chạy nhanh
-    ports: ["26658:8080"]
+    ports: ["${ENGRAM_PORT_DAMOCK:-18658}:8080"]
     networks: [engram]
 
   # Celestia Mocha thật — dùng ở giai đoạn 2 và 3.
@@ -86,7 +98,7 @@ services:
     image: ghcr.io/celestiaorg/celestia-node:v0.28.5-mocha
     profiles: ["mocha"]
     command: ["celestia", "light", "start", "--core.ip", "consensus.lunaroasis.net", "--p2p.network", "mocha"]
-    ports: ["26659:26658"]
+    ports: ["${ENGRAM_PORT_CELESTIA:-18659}:26658"]
     networks: [engram]
 
   # ── NÚT LƯU TRỮ ─────────────────────────────────────────────────────────
@@ -102,7 +114,7 @@ services:
       CELESTIA_ADDRESS: ${PROVIDER_A_CELESTIA_ADDR:-celestia1aaaa}
     volumes: [shared:/shared]
     depends_on: {deployer: {condition: service_completed_successfully}}
-    ports: ["8101:8080"]
+    ports: ["${ENGRAM_PORT_PROV_A:-18101}:8080"]
     networks: [engram]
 
   provider-b:
@@ -113,7 +125,7 @@ services:
       CELESTIA_ADDRESS: ${PROVIDER_B_CELESTIA_ADDR:-celestia1bbbb}
     volumes: [shared:/shared]
     depends_on: {deployer: {condition: service_completed_successfully}}
-    ports: ["8102:8080"]
+    ports: ["${ENGRAM_PORT_PROV_B:-18102}:8080"]
     networks: [engram]
 
   # ── WORKER ──────────────────────────────────────────────────────────────
@@ -125,7 +137,7 @@ services:
     environment: {<<: *py-env, WORKER_NAME: W_1}
     volumes: [shared:/shared]
     depends_on: {deployer: {condition: service_completed_successfully}}
-    ports: ["8201:8080"]
+    ports: ["${ENGRAM_PORT_WORK_1:-18201}:8080"]
     networks: [engram]
 
   worker-2:
@@ -133,7 +145,7 @@ services:
     environment: {<<: *py-env, WORKER_NAME: W_2}
     volumes: [shared:/shared]
     depends_on: {deployer: {condition: service_completed_successfully}}
-    ports: ["8202:8080"]
+    ports: ["${ENGRAM_PORT_WORK_2:-18202}:8080"]
     networks: [engram]
 
   # ── AGGREGATOR ──────────────────────────────────────────────────────────
@@ -148,7 +160,7 @@ services:
       CHILDPROOF_DA_MANDATORY: "true"
     volumes: [shared:/shared]
     depends_on: {deployer: {condition: service_completed_successfully}}
-    ports: ["8301:8080"]
+    ports: ["${ENGRAM_PORT_AGG:-18301}:8080"]
     networks: [engram]
 
   # ── KHÁCH HÀNG ──────────────────────────────────────────────────────────
@@ -157,7 +169,7 @@ services:
     environment: {<<: *py-env, CLIENT_NAME: Chi}
     volumes: [shared:/shared]
     depends_on: {deployer: {condition: service_completed_successfully}}
-    ports: ["8401:8080"]
+    ports: ["${ENGRAM_PORT_CLIENT:-18401}:8080"]
     networks: [engram]
 
   # ── GIÁM SÁT ────────────────────────────────────────────────────────────
@@ -168,7 +180,7 @@ services:
     environment: *py-env
     volumes: [shared:/shared]
     depends_on: {deployer: {condition: service_completed_successfully}}
-    ports: ["8501:8080"]
+    ports: ["${ENGRAM_PORT_WATCH:-18501}:8080"]
     networks: [engram]
 
   # ── ĐIỀU PHỐI MÔ PHỎNG ──────────────────────────────────────────────────

@@ -2,11 +2,14 @@
 #  Engram — lệnh thường dùng
 #  [CHỐT A1-b · A2-c · A3-a · C3-a]
 # ═══════════════════════════════════════════════════════════════════════════
-.PHONY: help build sim sim-mocha down logs test test-py test-sol gas clean fmt
+.PHONY: preflight help build sim sim-mocha down logs test test-py test-sol gas clean fmt
 
 CHAIN_MODE ?= local
 N_DEALS    ?= 20
 N_EPOCHS   ?= 3
+
+preflight:       ## Kiểm xung đột cổng/container TRƯỚC khi chạy trên máy chung
+	@bash scripts/preflight.sh
 
 help:            ## Danh sách lệnh
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n",$$1,$$2}'
@@ -14,7 +17,7 @@ help:            ## Danh sách lệnh
 build:           ## Xây mọi ảnh Docker
 	docker compose build
 
-sim:             ## Chạy mô phỏng, chế độ local (không cần mạng ngoài)
+sim: preflight   ## Chạy mô phỏng, chế độ local (không cần mạng ngoài)
 	CHAIN_MODE=local N_DEALS=$(N_DEALS) N_EPOCHS=$(N_EPOCHS) \
 	docker compose --profile local up --abort-on-container-exit orchestrator
 
