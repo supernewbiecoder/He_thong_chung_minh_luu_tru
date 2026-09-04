@@ -2,7 +2,7 @@
 #  Engram — lệnh thường dùng
 #  [CHỐT A1-b · A2-c · A3-a · C3-a]
 # ═══════════════════════════════════════════════════════════════════════════
-.PHONY: preflight help build sim deploy sim-mocha down logs test test-py test-sol gas clean fmt
+.PHONY: preflight help build sim deploy reset sim-mocha down logs test test-py test-sol gas clean fmt
 
 CHAIN_MODE ?= local
 N_DEALS    ?= 20
@@ -27,8 +27,12 @@ deploy:          ## Biên dịch và deploy hợp đồng lên anvil trong conta
 sim-mocha:       ## Chạy trên Celestia Mocha + Anvil
 	CHAIN_MODE=mocha-anvil docker compose up --abort-on-container-exit orchestrator
 
+reset:           ## Dọn sạch rồi chạy lại từ đầu
+	-docker compose --profile local --profile chain down -v --remove-orphans
+	@$(MAKE) --no-print-directory sim
+
 down:            ## Dừng và dọn
-	docker compose --profile local down -v
+	docker compose --profile local --profile chain down -v --remove-orphans
 
 logs:            ## Xem log mọi dịch vụ
 	docker compose logs -f

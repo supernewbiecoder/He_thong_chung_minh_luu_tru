@@ -156,15 +156,25 @@ lỗ §J.2.2.
 
 ### Chạy lại lần hai
 
-Container của lần trước vẫn còn. Đó **không phải xung đột** — preflight nhận ra
-chúng qua nhãn `com.docker.compose.project` và chỉ báo:
+Container của lần trước vẫn còn. Đó **không phải xung đột**.
+
+`docker compose` tự dựng lại container của chính nó, nên phần kiểm Docker trong
+preflight **chỉ báo, không chặn**. Thứ duy nhất chặn được là **cổng bị chiếm** —
+vì cái đó thì compose không tự xử lý được.
 
 ```
+── Dấu vết Docker (chỉ báo, KHÔNG chặn) ──
   container engram-sim-* (9 cái)                     của lần chạy trước
-  ✓ Không xung đột với ai. Còn dấu vết lần chạy trước của CHÍNH MÌNH.
+  mạng engram-sim_engram                             đã có, compose dùng lại
+
+  ✓ Cổng trống. Còn dấu vết Docker lần trước — compose sẽ dựng lại.
 ```
 
-`docker compose` tự dựng lại, cứ `make sim` tiếp. Muốn sạch hẳn thì `make down`.
+Cứ `make sim` tiếp. Nếu lần trước hỏng giữa chừng và muốn sạch hẳn:
+
+```bash
+make reset      # down -v --remove-orphans, rồi sim lại
+```
 
 ### Dọn
 

@@ -53,39 +53,39 @@ for spec in "26658:celestia-node RPC" "26659:celestia gateway" "8545:EVM/anvil k
 done
 
 echo
-echo "── Tên container và mạng Docker ──"
+echo "── Dấu vết Docker (chỉ báo, KHÔNG chặn) ──"
 #
-# PHẢI phân biệt CỦA MÌNH TỪ LẦN TRƯỚC với CỦA NGƯỜI KHÁC.
+# ── VÌ SAO PHẦN NÀY KHÔNG BAO GIỜ ĐẶT FAIL=1 ──────────────────────────────
 #
-# Bản trước gộp làm một và báo XUNG ĐỘT cho chính container của mình, nên sau
-# lần chạy đầu là preflight chặn vĩnh viễn — mà `make sim` gọi preflight trước,
-# thành ra chạy được đúng một lần rồi tắc. Dương tính giả còn tệ hơn không kiểm:
-# nó dạy người dùng bỏ qua cảnh báo.
+# `docker compose` TỰ XỬ LÝ container cũ của chính nó: nó dựng lại, không báo
+# lỗi. Nên chặn `make sim` vì có container cũ là chặn một thứ không hỏng.
 #
-# Cách phân biệt: container do docker compose tạo mang nhãn
-# com.docker.compose.project. Trùng nhãn nghĩa là của mình.
-MINE=$(docker ps -aq --filter "label=com.docker.compose.project=${PROJECT}" 2>/dev/null | wc -l)
-OTHERS=$(docker ps -a --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}' 2>/dev/null \
-         | awk -F'\t' -v p="${PROJECT}" '$1 ~ "^"p"-" && $2 != p' | wc -l)
+# Bản trước chặn, và sai hai lần liên tiếp:
+#   ① so tên trần → tưởng container của chính mình là của người khác
+#   ② `{{index .Labels "..."}}` trả "<no value>" khi nhãn thiếu, mà chuỗi đó
+#      không rỗng và không bằng tên project → lại rơi vào nhánh "người khác"
+#
+# Thứ THẬT SỰ chặn được là CỔNG bị chiếm. Cái đó ở trên, và cái đó mới đặt FAIL.
+# Phần này chỉ báo để biết mà dọn.
 
-if [ "${OTHERS:-0}" -gt 0 ]; then
-  bad "container tên ${PROJECT}-* nhưng KHÔNG phải của project này"
-elif [ "${MINE:-0}" -gt 0 ]; then
-  say "container ${PROJECT}-* ($MINE cái)" "của lần chạy trước"
+NAMED=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c "^${PROJECT}-" || true)
+MINE=$(docker ps -aq --filter "label=com.docker.compose.project=${PROJECT}" 2>/dev/null | wc -l)
+
+if [ "${NAMED:-0}" -eq 0 ]; then
+  ok "container ${PROJECT}-*"
+elif [ "${NAMED:-0}" -eq "${MINE:-0}" ]; then
+  say "container ${PROJECT}-* (${NAMED} cái)" "của lần chạy trước"
   LEFTOVER=1
 else
-  ok "container tiền tố ${PROJECT}-"
+  say "container ${PROJECT}-* (${NAMED} cái, ${MINE} của mình)" "kiểm bằng: docker ps -a"
+  LEFTOVER=1
 fi
 
-NET_OWNER=$(docker network inspect "${PROJECT}_engram" \
-            --format '{{index .Labels "com.docker.compose.project"}}' 2>/dev/null)
-if [ -z "$NET_OWNER" ]; then
-  ok "mạng ${PROJECT}_engram"
-elif [ "$NET_OWNER" = "${PROJECT}" ]; then
-  say "mạng ${PROJECT}_engram" "của lần chạy trước"
+if docker network ls --format '{{.Name}}' 2>/dev/null | grep -qx "${PROJECT}_engram"; then
+  say "mạng ${PROJECT}_engram" "đã có, compose dùng lại"
   LEFTOVER=1
 else
-  bad "mạng ${PROJECT}_engram thuộc project khác ($NET_OWNER)"
+  ok "mạng ${PROJECT}_engram"
 fi
 
 echo
@@ -121,7 +121,7 @@ fi
 
 echo
 if [ "$FAIL" -ne 0 ]; then
-  echo "  ✗ XUNG ĐỘT THẬT — thứ của người khác đang chiếm chỗ."
+  echo "  ✗ CỔNG BỊ CHIẾM — thứ của người khác đang giữ cổng ta cần."
   echo
   echo "    Đổi cổng:"
   echo "      ENGRAM_PORT_ANVIL=19545 ENGRAM_PORT_DAMOCK=19658 \\"
@@ -136,8 +136,8 @@ if [ "$FAIL" -ne 0 ]; then
 fi
 
 if [ "${LEFTOVER:-0}" -ne 0 ]; then
-  echo "  ✓ Không xung đột với ai. Còn dấu vết lần chạy trước của CHÍNH MÌNH."
-  echo "    Không sao — docker compose sẽ dựng lại. Muốn sạch hẳn thì:  make down"
+  echo "  ✓ Cổng trống. Còn dấu vết Docker lần trước — compose sẽ dựng lại."
+  echo "    Muốn sạch hẳn:  make reset"
 else
   echo "  ✓ Không xung đột. Chạy được:  make check"
 fi
