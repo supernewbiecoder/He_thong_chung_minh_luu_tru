@@ -41,8 +41,24 @@ contract EngramManagerTest is Test {
     }
 
     function _register(uint64 slots) internal {
+        // Tính TIỀN TRƯỚC, prank SAU.
+        //
+        // ── BẪY FOUNDRY, và nó hỏng im lặng ────────────────────────────────
+        //
+        // `vm.prank` chỉ đổi msg.sender cho ĐÚNG MỘT lời gọi kế tiếp. Viết
+        //
+        //     vm.prank(provider);
+        //     m.registerProvider{value: slots * m.MIN_COLLATERAL_PER_SLOT()}(…);
+        //
+        // thì `m.MIN_COLLATERAL_PER_SLOT()` là một lời gọi, và NÓ ăn mất prank.
+        // `registerProvider` chạy với msg.sender là hợp đồng test, nên hồ sơ
+        // được ghi vào providers[address(this)] thay vì providers[provider].
+        //
+        // Giao dịch KHÔNG revert. Test chỉ thấy providers[provider] rỗng —
+        // "assertion failed: 0 != 4" — và triệu chứng đó không hề gợi ra prank.
+        uint256 amount = uint256(slots) * m.MIN_COLLATERAL_PER_SLOT();
         vm.prank(provider);
-        m.registerProvider{value: uint256(slots) * m.MIN_COLLATERAL_PER_SLOT()}(
+        m.registerProvider{value: amount}(
             bytes20(uint160(0xAA11)), slots, "/dns4/pa.io/tcp/443", hex"01"
         );
     }
@@ -160,6 +176,33 @@ contract EngramManagerTest is Test {
         console.log("delta:", used > 487109 ? used - 487109 : 487109 - used);
         assertEq(m.lastCommittedEpoch(), 1);
         assertEq(m.currentStateRoot(), keccak256("newRoot"));
+    }
+
+    /// Gas 244.444 này là PHẦN LOGIC HỢP ĐỒNG, chưa gồm xác minh Groth16.
+    ///
+    /// MockVerifier chỉ kiểm độ dài 356 byte rồi trả về. Bộ xác minh SP1 thật
+    /// chạy phép ghép cặp BN254 qua precompile ecPairing, tốn thêm khoảng
+    /// 200–250k gas.
+    ///
+    ///     244.444  logic hợp đồng          ← đo được ở đây
+    ///   + ~243.000 xác minh Groth16 thật    ← CHƯA đo
+    ///   ─────────
+    ///     ~487.000                          ≈ 487.109 trong §K.1
+    ///
+    /// Con số trong đặc tả khớp tổng, nhưng ĐÓ LÀ SUY LUẬN chứ chưa phải phép
+    /// đo. Muốn xác nhận phải deploy bộ xác minh SP1 thật thay MockVerifier.
+    function test_gas_phan_ra() public {
+        bytes memory pv = _pv(1, address(this), bytes32(0), m.STORAGE_VK_DIGEST());
+        uint256 g0 = gasleft();
+        m.commitEpoch(1, new bytes(356), pv);
+        uint256 logicOnly = g0 - gasleft();
+
+        console.log("logic hop dong (khong Groth16):", logicOnly);
+        console.log("spec K.1 (co Groth16 that)    :", uint256(487109));
+        console.log("phan con thieu ~= Groth16     :", 487109 - logicOnly);
+
+        // Chốt lại con số đo được để lần sau đổi mã là thấy ngay.
+        assertLt(logicOnly, 300000, "logic hop dong phai duoi 300k gas");
     }
 
     /// [SPEC §D.2.4] Chống front-run. Không có 20 byte submitter thì ai đó theo

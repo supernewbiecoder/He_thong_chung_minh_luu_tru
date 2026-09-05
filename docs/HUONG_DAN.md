@@ -222,6 +222,26 @@ forge test --gas-report
 
 Tám test xanh, và trong `--gas-report` một dòng cho `commitEpoch`.
 
+### Con số đo được tách làm hai phần
+
+`MockVerifier` chỉ kiểm độ dài 356 byte rồi trả về — nó **không** chạy phép ghép
+cặp BN254. Nên con số đo bằng mock là **phần logic hợp đồng**, chưa gồm xác minh
+Groth16:
+
+```
+   244.444   logic hợp đồng           ← đo được với MockVerifier
+ + ~243.000  xác minh Groth16 thật    ← CHƯA đo
+ ─────────
+  ~487.000                            ≈ 487.109 trong §K.1
+```
+
+Tổng khớp, nhưng **đó là suy luận chứ chưa phải phép đo**. Muốn xác nhận 487.109
+phải thay `MockVerifier` bằng bộ xác minh SP1 thật rồi đo lại.
+
+Trong bài báo, viết đúng như nó là: *"gas logic hợp đồng đo được 244.444; phần
+xác minh Groth16 lấy từ chi phí precompile ecPairing đã biết"* — đừng gộp hai
+con số rồi trình bày như một phép đo duy nhất.
+
 **So với 487.109 trong §K.1.** Nếu lệch:
 
 | Lệch | Nghĩa là |
