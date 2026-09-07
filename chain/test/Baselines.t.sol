@@ -81,7 +81,23 @@ contract BaselinesTest is Test {
         );
     }
 
-    /// Chi phí intrinsic của calldata — phần forge KHÔNG đo.
+    // Chi phí intrinsic của calldata — phần forge KHÔNG đo.
+    //
+    // ── HÀM NÀY PHẢI GỌI NGOÀI VÙNG ĐO ─────────────────────────────────
+    //
+    // Nó lặp trên TỪNG BYTE. Với 13.844 byte thì bản thân vòng lặp tốn hơn
+    // 3 triệu gas trong EVM. Viết
+    //
+    //     total = (g0 - gasleft()) + _intrinsic(cd);      // SAI
+    //
+    // thì Solidity có thể tính _intrinsic TRƯỚC gasleft(), và chi phí vòng
+    // lặp lọt vào phép đo. Đó là lý do lần chạy đầu cho B1 tại batch 1 ra
+    // 3.630.440 thay vì ~267.000 — sai gấp 13 lần.
+    //
+    // Phải tách hai câu lệnh:
+    //
+    //     uint256 exec = g0 - gasleft();                  // ĐÚNG
+    //     uint256 total = exec + _intrinsic(cd);
     function _intrinsic(bytes memory data) internal pure returns (uint256 g) {
         g = TX_BASE;
         for (uint256 i; i < data.length; ++i) {
@@ -114,7 +130,8 @@ contract BaselinesTest is Test {
             bytes memory cd1 = abi.encodeCall(B1DirectCalldata.submit, (blob));
             uint256 g0 = gasleft();
             b1.submit(blob);
-            uint256 b1Total = (g0 - gasleft()) + _intrinsic(cd1);
+            uint256 exec1 = g0 - gasleft();          // TÁCH RIÊNG — xem _intrinsic
+            uint256 b1Total = exec1 + _intrinsic(cd1);
 
             // ── B3 ──
             bytes32[] memory ids = new bytes32[](n);
@@ -126,10 +143,14 @@ contract BaselinesTest is Test {
             bytes memory cd3 = abi.encodeCall(B3HashOnly.submit, (ids, hs));
             g0 = gasleft();
             b3.submit(ids, hs);
-            uint256 b3Total = (g0 - gasleft()) + _intrinsic(cd3);
+            uint256 exec3 = g0 - gasleft();          // TÁCH RIÊNG
+            uint256 b3Total = exec3 + _intrinsic(cd3);
 
             // ── Engram: KHÔNG phụ thuộc n ──
-            uint256 engramTotal = _engramOnce(k) ;
+            // Engram đo với PairingCostVerifier — tức CÓ chi phí Groth16 thật,
+            // để so sánh với baseline là công bằng. Dùng MockVerifier ở đây sẽ
+            // bỏ sót ~233.000 gas và làm Engram trông rẻ hơn thực tế.
+            uint256 engramTotal = _engramOnce(k);
 
             console.log(n, b1Total, b3Total);
             console.log("   engram:", engramTotal);
@@ -140,7 +161,7 @@ contract BaselinesTest is Test {
     /// `salt` để mỗi lần gọi dùng một epoch khác, tránh lẫn chi phí ô nhớ lạnh.
     function _engramOnce(uint256 salt) internal returns (uint256) {
         EngramManager m = new EngramManager(
-            new MockVerifier(), blobstream,
+            new PairingCostVerifier(), blobstream,
             keccak256("VK"), keccak256("AVK"), keccak256("WVK"), keccak256("GVK"), bytes32(0)
         );
         bytes memory pv = _pv(m, 1, bytes32(0));
@@ -148,8 +169,9 @@ contract BaselinesTest is Test {
         bytes memory cd = abi.encodeCall(EngramManager.commitEpoch, (1, proof, pv));
         uint256 g0 = gasleft();
         m.commitEpoch(1, proof, pv);
+        uint256 exec = g0 - gasleft();               // TÁCH RIÊNG
         salt; // giữ chữ ký ổn định
-        return (g0 - gasleft()) + _intrinsic(cd);
+        return exec + _intrinsic(cd);
     }
 
     function _pv(EngramManager m, uint64 epoch, bytes32 prevRoot)
@@ -189,7 +211,8 @@ contract BaselinesTest is Test {
         bytes memory cd1 = abi.encodeCall(B1DirectCalldata.submit, (blob1));
         uint256 g0 = gasleft();
         b1.submit(blob1);
-        uint256 one = (g0 - gasleft()) + _intrinsic(cd1);
+        uint256 exec = g0 - gasleft();               // TÁCH RIÊNG
+        uint256 one = exec + _intrinsic(cd1);
 
         uint256 eng = _engramOnce(99);
         console.log("B1 tai batch=1 :", one);
