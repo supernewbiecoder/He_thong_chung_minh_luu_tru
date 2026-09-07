@@ -57,6 +57,15 @@ sang Celestia Mocha là **bắt buộc**: chỉ ở đó mới kiểm được r
 nhịp, và quan trọng nhất là việc đồng thuận Celestia thật sự áp đặt trường
 `signer` — nền của §J.2.1.
 
+## Đo đạc cho bài báo
+
+**`docs/DO_DAC.md`** — ba nhóm phép đo bám ba câu hỏi nghiên cứu, kèm chỗ nào
+đo được và chỗ nào không.
+
+    make baselines    # so sánh 4 phương án — bảng chính phần Evaluation
+    make gas          # gas commitEpoch, có và không có ghép cặp Groth16
+    make attacks      # bảng tấn công bị chặn — số liệu RQ1
+
 ## Bắt đầu ở đâu
 
 **`docs/HUONG_DAN.md`** — năm bước, từ con số 0, cô lập hoàn toàn với những gì

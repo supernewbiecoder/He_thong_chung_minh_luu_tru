@@ -2,7 +2,7 @@
 #  Engram — lệnh thường dùng
 #  [CHỐT A1-b · A2-c · A3-a · C3-a]
 # ═══════════════════════════════════════════════════════════════════════════
-.PHONY: preflight help build sim deploy reset check-sol sim-mocha down logs test test-py test-sol gas clean fmt
+.PHONY: preflight help build sim deploy reset check-sol baselines attacks gas sim-mocha down logs test test-py test-sol gas clean fmt
 
 CHAIN_MODE ?= local
 export DOCKER_UID := $(shell id -u)
@@ -79,8 +79,15 @@ check-sol:       ## Kiểm chuỗi Solidity chỉ dùng ASCII
 test-sol: check-sol  ## Test hợp đồng
 	cd chain && forge test -vv
 
-gas:             ## Đo gas, đối chiếu 487.109 trong §K.1
-	cd chain && forge test --gas-report
+gas:             ## Đo gas commitEpoch, đối chiếu §K.1
+	cd chain && forge test --match-test "gas_" -vv
+
+baselines:       ## SO SÁNH 4 phương án theo batch — bảng chính phần Evaluation
+	cd chain && forge test --match-contract BaselinesTest -vv
+
+attacks:         ## Bảng tấn công bị chặn — số liệu RQ1
+	@$(MAKE) --no-print-directory test-py
+	cd chain && forge test --match-contract EngramManagerTest -vv
 
 fmt:             ## Định dạng mã
 	cd chain && forge fmt
