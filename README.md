@@ -57,6 +57,11 @@ sang Celestia Mocha là **bắt buộc**: chỉ ở đó mới kiểm được r
 nhịp, và quan trọng nhất là việc đồng thuận Celestia thật sự áp đặt trường
 `signer` — nền của §J.2.1.
 
+## Kết quả
+
+**`docs/KET_QUA.md`** — mọi số đo, kèm lệnh tái lập và điều kiện đo. Lấy từ đây
+khi viết bài, đừng lục lại terminal.
+
 ## Đo đạc cho bài báo
 
 **`docs/DO_DAC.md`** — ba nhóm phép đo bám ba câu hỏi nghiên cứu, kèm chỗ nào
