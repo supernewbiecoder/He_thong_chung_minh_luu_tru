@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from engram_common.blob import FilterStats, ObservedBlob, filter_blobs
 from engram_common.constants import BUNDLE_SIZE_BYTES
 from engram_common.costs import shard_cycles
+from engram_common.membership import MembershipRegistry, verify_registry
 from engram_common.crypto import keccak, merkle_root
 from engram_common.verdict import Verdict
 
@@ -88,6 +89,25 @@ def verify_bundle(payload: bytes, expected: ExpectedDeal) -> bool:
     return payload[:32] == expected.sealed_root[:32]
 
 
+def expected_from_registry(
+    registry: MembershipRegistry, onchain_snapshot_id: bytes, epoch: int,
+    deadline_idx: int, shard: int,
+) -> list[ExpectedDeal]:
+    """[SPEC §D.3] Dựng danh sách kỳ vọng TỪ SỔ, không nhận từ host.
+
+    Đây là cửa vào bắt buộc. `verify_registry` ném ngoại lệ nếu sổ không khớp
+    giá trị on-chain — bớt một mục, đổi thứ tự, hay sai epoch đều bị chặn.
+
+    Không có bước này thì host bớt một hợp đồng, hợp đồng đó không có phán
+    quyết, nút mất doanh thu, và KHÔNG AI PHÁT HIỆN (§J.2.6).
+    """
+    verify_registry(registry, onchain_snapshot_id, epoch)
+    return [
+        ExpectedDeal(d.provider_id, d.deal_id, d.sealed_root, d.declared_unavailable)
+        for d in registry.expected_for(deadline_idx, shard)
+    ]
+
+
 def verify_shard(
     *,
     deadline: int,
@@ -103,6 +123,9 @@ def verify_shard(
     """Thuật toán 4 — VerifyShard.
 
     Thứ tự các bước là bắt buộc; xem __init__.py của gói này.
+
+    `expected` PHẢI đến từ `expected_from_registry`, không phải từ host. Nhận
+    thẳng từ host là mở lại lỗ hổng §J.2.6.
     """
     # ── BƯỚC 0: PHỦ ĐẦY ĐỦ  [SPEC §G.2] ──────────────────────────────────
     # Làm TRƯỚC mọi thứ khác. Nó cố định tập blob mà guest được phép xét, nên

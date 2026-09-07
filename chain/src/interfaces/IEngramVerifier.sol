@@ -12,9 +12,12 @@ pragma solidity ^0.8.24;
 /// là public input 32 byte của ELF, nên đổi backend KHÔNG đụng mạch, KHÔNG đụng
 /// hợp đồng, và số 356 B cùng 487.109 gas vẫn dùng được.
 interface IEngramVerifier {
+    /// KHÔNG `view`: bộ đo `PairingCostVerifier` ghi lại kết quả ghép cặp để
+    /// trình biên dịch không tối ưu mất phép tính. Bộ xác minh thật vẫn có thể
+    /// là `view` — `external` rộng hơn nên nhận cả hai.
     function verifyProof(
         bytes32 programVKey,
         bytes calldata publicValues,
         bytes calldata proofBytes
-    ) external view;
+    ) external;
 }

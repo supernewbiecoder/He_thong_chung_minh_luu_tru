@@ -43,8 +43,16 @@ contract EngramManager {
       minh yếu, đưa vào guest, guest tính đúng digest của khoá yếu đó, và mọi
       thứ khớp. Bằng chứng "hợp lệ" cho một hệ chứng minh mà host giữ cửa sau.
 
-      [MỞ §M.2.2 ①] Vẫn còn thiếu: SRS phải lấy từ ceremony công khai, không
-      sinh tại chỗ. Ghim khoá mà SRS có trapdoor thì ghim vô nghĩa.
+      ── GIỚI HẠN PHẢI ĐỌC TRƯỚC KHI TIN VÀO PHÉP GHIM NÀY  [SPEC §K.2.1 ①] ──
+
+      Spartan trên HyperKZG cần một SRS. Nếu SRS sinh tại chỗ thì người sinh
+      giữ trapdoor, và giữ trapdoor nghĩa là GIẢ ĐƯỢC BẰNG CHỨNG.
+
+      Nên cho tới khi SRS đến từ một ceremony công khai, phép ghim dưới đây
+      CHƯA CÓ HIỆU LỰC AN TOÀN: nó ghim một khoá mà người sinh có thể có cửa
+      sau. Đừng liệt kê nó như một cơ chế đang hoạt động.
+
+      Đây là giới hạn nghiêm trọng nhất còn lại của hệ thống.
     ═══════════════════════════════════════════════════════════════════════*/
 
     bytes32 public immutable STORAGE_VK_DIGEST;
@@ -188,6 +196,53 @@ contract EngramManager {
 
     bytes32 public currentStateRoot;
     uint64 public lastCommittedEpoch;
+
+    /*───────────────────────────────────────────────────────────────────────
+      SỔ THÀNH VIÊN  ·  [SPEC §D.3]
+
+      Hợp đồng KHÔNG THỂ tính deals_root — đó là O(N) on-chain. Nên tách:
+
+        on-chain  một giá trị tích luỹ 32 byte, một keccak mỗi thao tác
+        trên DA   toàn văn, namespace kind=04
+
+      LỖ HỔNG NÓ ĐÓNG [SPEC §J.2.6]: bản trước để guest lặp trên `expected`
+      mà không nói danh sách đó ở đâu ra, và hợp đồng giải mã `snapshot_id`
+      rồi BỎ ĐÓ — không kiểm gì. Host bớt một hợp đồng thì hợp đồng đó không
+      có phán quyết, nút mất doanh thu, KHÔNG AI PHÁT HIỆN.
+
+      Điều bản sửa mua được không phải "phát hiện gian lận" mà là DỜI CHI PHÍ
+      SAI TỪ NẠN NHÂN SANG HOST: host bỏ sót thì bằng chứng bị từ chối và nó
+      đốt hàng giờ SP1 không công.
+    ───────────────────────────────────────────────────────────────────────*/
+
+    /// Tích luỹ mọi thay đổi thành viên. Cập nhật O(1), ~100 gas mỗi thao tác.
+    bytes32 public membershipLog;
+
+    /// Giá trị đã đóng băng cho epoch đang chứng minh.
+    ///
+    /// [SPEC §D.3.5] Đóng băng tại `commitEpoch` của epoch TRƯỚC, không phải
+    /// đúng biên epoch trên Celestia — vì hợp đồng EVM không đọc được chiều
+    /// cao Celestia, và ở biên epoch không có giao dịch nào để kích hoạt.
+    ///
+    /// Hệ quả: thay đổi xảy ra giữa biên Celestia và lần commit trước sẽ rơi
+    /// vào epoch hiện tại thay vì epoch sau. Rủi ro thực tế thấp vì hợp đồng
+    /// phải qua `activate` mới vào tập chứng minh, mà niêm phong mất 1,26 giờ.
+    bytes32 public snapshotForCurrentEpoch;
+
+    event MembershipChanged(bytes32 indexed kind, bytes32 a, bytes32 b, bytes32 newLog);
+    event SnapshotFrozen(uint64 indexed epoch, bytes32 snapshotId);
+
+    bytes32 constant M_PROVIDER = "PROVIDER";
+    bytes32 constant M_DEAL_OPEN = "DEAL_OPEN";
+    bytes32 constant M_DEAL_ACTIVE = "DEAL_ACTIVE";
+    bytes32 constant M_DEAL_CLOSED = "DEAL_CLOSED";
+
+    /// Ghi một thay đổi vào sổ. Guest phát lại chuỗi này từ sự kiện on-chain
+    /// và phải ra đúng cùng giá trị — bớt một mục là khác ngay.
+    function _logMembership(bytes32 kind, bytes32 a, bytes32 b) internal {
+        membershipLog = keccak256(abi.encodePacked(membershipLog, kind, a, b));
+        emit MembershipChanged(kind, a, b, membershipLog);
+    }
     uint256 public protocolFeePool;
 
     /*═══════════════════════════════════════════════════════════════════════
@@ -228,6 +283,7 @@ contract EngramManager {
     error AlreadyClaimed();
     error ClaimOutOfOrder();
     error BadMerkleProof();
+    error SnapshotMismatch();   // [SPEC §D.3] sổ thành viên không khớp
 
     constructor(
         IEngramVerifier _verifier,
@@ -280,6 +336,8 @@ contract EngramManager {
         p.multiaddr = multiaddr;
         p.registeredAtEpoch = lastCommittedEpoch + 1; // hiệu lực từ biên epoch sau
 
+        _logMembership(M_PROVIDER, bytes32(uint256(uint160(msg.sender))),
+                       bytes32(uint256(uint160(uint256(bytes32(celestiaAddress)) >> 96))));
         emit ProviderRegistered(msg.sender, celestiaAddress, capacitySlots);
     }
 
@@ -359,6 +417,7 @@ contract EngramManager {
         d.state = DealState.Pending;
 
         p.usedSlots += 1;
+        _logMembership(M_DEAL_OPEN, q.dealId, bytes32(uint256(uint160(q.provider))));
         emit DealOpened(q.dealId, msg.sender, q.provider, q.deadlineIdx, q.shard);
     }
 
@@ -402,6 +461,9 @@ contract EngramManager {
         verifier.verifyProof(ACTIVATION_VK_DIGEST, publicValues, proof);
 
         d.state = DealState.Active;
+        // Chỉ hợp đồng ĐÃ KÍCH HOẠT mới vào tập chứng minh, nên đây mới là
+        // thời điểm nó thật sự đổi thành viên.
+        _logMembership(M_DEAL_ACTIVE, dealId, bytes32(uint256(d.deadlineIdx)));
         emit DealActivated(dealId);
     }
 
@@ -416,6 +478,7 @@ contract EngramManager {
         d.state = DealState.Aborted;
         providers[d.provider].usedSlots -= 1;
 
+        _logMembership(M_DEAL_CLOSED, dealId, bytes32(0));
         (bool ok,) = payable(d.customer).call{value: refund}("");
         require(ok, "hoan tien that bai");
         emit DealAborted(dealId, d.customer);
@@ -449,6 +512,12 @@ contract EngramManager {
         // ④ [SPEC §D.2.2] NEO VÀO HỆ CHỨNG MINH. Đọc comment ở mục 1.
         if (pv.storageVkDigest != STORAGE_VK_DIGEST) revert VkDigestMismatch();
 
+        // ④b [SPEC §D.3] NEO VÀO SỔ THÀNH VIÊN.
+        //
+        // Không có phép kiểm này thì `snapshot_id` chỉ là 32 byte trang trí:
+        // host trình gì cũng được, và bỏ sót hợp đồng thành vô hình.
+        if (pv.snapshotId != snapshotForCurrentEpoch) revert SnapshotMismatch();
+
         // ⑤ Phép tính nặng nhất. Bằng chứng KHÔNG chứa 296 byte — nó chỉ cam kết
         //    vào BĂM của chúng. 296 byte đi riêng qua calldata, hợp đồng băm lại
         //    rồi đối chiếu. [SPEC Hình D.2]
@@ -467,6 +536,11 @@ contract EngramManager {
         });
         currentStateRoot = pv.newStateRoot;
         lastCommittedEpoch = epoch;
+
+        // Đóng băng sổ cho epoch KẾ TIẾP. Đây là thời điểm gần biên epoch nhất
+        // mà hợp đồng thật sự chạy — xem ghi chú ở `snapshotForCurrentEpoch`.
+        snapshotForCurrentEpoch = membershipLog;
+        emit SnapshotFrozen(epoch + 1, membershipLog);
 
         emit EpochCommitted(epoch, pv.newStateRoot, pv.numVerified);
     }

@@ -57,8 +57,10 @@ PYPATH = common/src:provider/src:worker/src:aggregator/src:client/src:orchestrat
 test-py:         ## Test Python, không cần Docker
 	@for t in common/tests/test_spec_consistency.py \
 	          common/tests/test_blob_impersonation.py \
+	          common/tests/test_membership.py \
 	          provider/tests/test_fanin_closure.py \
-	          worker/tests/test_lottery.py; do \
+	          worker/tests/test_lottery.py \
+	          aggregator/tests/test_circuit_breaker.py; do \
 	  printf "  %-46s" "$$t"; \
 	  PYTHONPATH=$(PYPATH) python3 $$t >/dev/null 2>&1 && echo "OK" || { echo "LỖI"; exit 1; }; \
 	done

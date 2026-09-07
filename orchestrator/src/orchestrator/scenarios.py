@@ -21,7 +21,7 @@ from worker.lottery import (  # noqa: E402
     LotteryStats, WorkerEntry, cooldown_deadlines, record_outcome,
     required_workers, worker_lottery,
 )
-from worker.verify import ExpectedDeal, verify_shard  # noqa: E402
+from worker.verify import expected_from_registry, verify_shard  # noqa: E402
 
 from .harness import SimNetwork
 
@@ -46,10 +46,11 @@ def run_deadline(net: SimNetwork, epoch: int, d_idx: int, attack_target=None, n_
             deadline=deadline_abs, r=2, assigned_count=net.assigned,
             total_cells=total_cells, cooldown=net.cooldown, stats=net.lottery_stats,
         )
-        expected = [
-            ExpectedDeal(d.provider_id, d.deal_id, d.sealed_root, d.declared)
-            for d in due if d.shard == shard
-        ]
+        # [SPEC §D.3] Dựng từ SỔ, đối chiếu snapshot_id — không nhận từ host.
+        reg = net.registry(epoch)
+        expected = expected_from_registry(
+            reg, reg.snapshot_id(), epoch, d_idx, shard
+        )
         observed = net.da.read(net.namespace(shard), slot.window_start, net.da.height)
         for w in chosen:  # r worker cùng chạy, hoà giải ở aggregator
             # [CHỐT F3] Worker "chết" mô phỏng: không nộp ChildProof.

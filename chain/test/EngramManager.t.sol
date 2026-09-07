@@ -5,6 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {EngramManager} from "../src/EngramManager.sol";
 import {MockVerifier} from "../src/mocks/MockVerifier.sol";
 import {MockBlobstream} from "../src/mocks/MockBlobstream.sol";
+import {PairingCostVerifier} from "../src/mocks/PairingCostVerifier.sol";
 // Phải import ĐÚNG interface để lấy kiểu struct.
 //
 // Bản trước khai báo một interface `IBlobstreamTypes` riêng ở cuối tệp với
@@ -133,22 +134,25 @@ contract EngramManagerTest is Test {
       [SPEC §D.2 / §I.1.1]
     ═══════════════════════════════════════════════════════════════════════*/
 
+    /// snapshot_id PHẢI khớp `snapshotForCurrentEpoch` on-chain (§D.3).
+    /// Bản trước điền `keccak256("snapshot")` tuỳ ý và hợp đồng vẫn nhận — đó
+    /// chính là lỗ hổng §J.2.6: trường này từng không được kiểm gì cả.
     function _pv(uint64 epoch, address submitter, bytes32 prevRoot, bytes32 vkDigest)
-        internal pure returns (bytes memory)
+        internal view returns (bytes memory)
     {
         return abi.encodePacked(
-            epoch,                       //   0..8
-            keccak256("batch"),          //   8..40
-            keccak256("da"),             //  40..72
-            uint64(812),                 //  72..80
-            keccak256("results"),        //  80..112
-            keccak256("resultsData"),    // 112..144
-            vkDigest,                    // 144..176
-            keccak256("snapshot"),       // 176..208
-            bytes20(submitter),          // 208..228
-            prevRoot,                    // 228..260
-            keccak256("newRoot"),        // 260..292
-            uint32(13)                   // 292..296
+            epoch,                            //   0..8
+            keccak256("batch"),               //   8..40
+            keccak256("da"),                  //  40..72
+            uint64(812),                      //  72..80
+            keccak256("results"),             //  80..112
+            keccak256("resultsData"),         // 112..144
+            vkDigest,                         // 144..176
+            m.snapshotForCurrentEpoch(),      // 176..208  ← lấy từ hợp đồng
+            bytes20(submitter),               // 208..228
+            prevRoot,                         // 228..260
+            keccak256("newRoot"),             // 260..292
+            uint32(13)                        // 292..296
         );
     }
 
@@ -203,6 +207,107 @@ contract EngramManagerTest is Test {
 
         // Chốt lại con số đo được để lần sau đổi mã là thấy ngay.
         assertLt(logicOnly, 300000, "logic hop dong phai duoi 300k gas");
+    }
+
+    /// ĐÂY LÀ PHÉP ĐO TRUNG TÂM CỦA BÀI BÁO.
+    ///
+    /// Tuyên bố: chi phí xác minh on-chain KHÔNG ĐỔI theo số hợp đồng trong
+    /// mạng. Test này chứng minh bằng cách cam kết ba epoch đại diện cho
+    /// 10, 1.000 và 10.000 hợp đồng, rồi so gas.
+    ///
+    /// Vì sao nó phải đúng: `commitEpoch` nhận ĐÚNG 844 byte calldata bất kể N
+    /// — 356 byte Groth16 cộng 296 byte public values cộng mào đầu ABI. Không
+    /// có mảng, không có vòng lặp theo N. Toàn bộ N hợp đồng được đại diện bởi
+    /// một trường 32 byte duy nhất: results_root.
+    ///
+    /// Bắt đầu từ epoch 2 để bỏ qua chi phí ghi lần đầu vào currentStateRoot
+    /// — epoch 1 luôn đắt hơn vì ô nhớ còn lạnh, và đó là chi phí một lần của
+    /// cả hệ chứ không phải chi phí theo N.
+    function test_gas_khong_doi_theo_so_hop_dong() public {
+        m.commitEpoch(1, new bytes(356), _pvN(1, bytes32(0), 1));
+
+        bytes32 root = m.currentStateRoot();
+        uint32[3] memory sizes = [uint32(10), uint32(1000), uint32(10000)];
+        uint256[3] memory used;
+
+        for (uint256 i = 0; i < 3; i++) {
+            uint64 e = uint64(i + 2);
+            bytes memory pv = _pvN(e, root, sizes[i]);
+            uint256 g0 = gasleft();
+            m.commitEpoch(e, new bytes(356), pv);
+            used[i] = g0 - gasleft();
+            root = m.currentStateRoot();
+        }
+
+        console.log("N=    10 ->", used[0]);
+        console.log("N=  1000 ->", used[1]);
+        console.log("N= 10000 ->", used[2]);
+
+        assertEq(used[0], used[1], "gas phai khong doi tu N=10 sang N=1000");
+        assertEq(used[1], used[2], "gas phai khong doi tu N=1000 sang N=10000");
+    }
+
+    /// Như _pv nhưng đặt được num_verified, để test O(1) ở trên đổi N.
+    function _pvN(uint64 epoch, bytes32 prevRoot, uint32 n) internal view returns (bytes memory) {
+        return abi.encodePacked(
+            epoch, keccak256("batch"), keccak256("da"), uint64(812),
+            keccak256("results"), keccak256("resultsData"), m.STORAGE_VK_DIGEST(),
+            m.snapshotForCurrentEpoch(), bytes20(address(this)), prevRoot,
+            keccak256(abi.encodePacked("newRoot", epoch)), n
+        );
+    }
+
+    /// ĐO GAS ĐẦY ĐỦ, gồm cả phép ghép cặp Groth16 thật.
+    ///
+    /// `PairingCostVerifier` chạy đúng đường tính toán của một bộ xác minh
+    /// Groth16 — hai ecMul, một ecAdd, một ecPairing 4 cặp — bằng các điểm sinh
+    /// hợp lệ trên đường cong. Kết quả ghép cặp vô nghĩa, nhưng GAS là thật:
+    /// precompile tốn đúng bằng nhau dù trả về 1 hay 0.
+    ///
+    /// Nhờ vậy đo được con số đầy đủ mà KHÔNG cần sinh bằng chứng SP1 — việc
+    /// đòi hàng chục GiB RAM và máy 37 GiB không làm nổi.
+    ///
+    /// Đây vẫn CHƯA phải bộ xác minh SP1 thật. Nó chỉ khẳng định phần chi phí
+    /// mật mã, vốn áp đảo, là bao nhiêu.
+    function test_gas_day_du_co_ghep_cap() public {
+        EngramManager m2 = new EngramManager(
+            new PairingCostVerifier(), blobstream,
+            keccak256("ENGRAM_STORAGE_VK_V1"), keccak256("ENGRAM_ACTIVATION_VK_V1"),
+            keccak256("ENGRAM_WORKER_PROGRAM_V1"), keccak256("ENGRAM_AGGREGATOR_PROGRAM_V1"),
+            bytes32(0)
+        );
+        bytes memory pv = _pv(1, address(this), bytes32(0), m2.STORAGE_VK_DIGEST());
+
+        uint256 g0 = gasleft();
+        m2.commitEpoch(1, new bytes(356), pv);
+        uint256 full = g0 - gasleft();
+
+        console.log("commitEpoch CO ghep cap  :", full);
+        console.log("spec K.1 truoc day       :", uint256(487109));
+        assertGt(full, 400000, "phai vuot 400k khi co ghep cap that");
+    }
+
+    /// [SPEC §D.3 / §J.2.6] snapshot_id sai thì hợp đồng TỪ CHỐI.
+    ///
+    /// Bản trước giải mã trường này rồi bỏ đó. Host bớt một hợp đồng khỏi danh
+    /// sách kỳ vọng thì hợp đồng đó không có phán quyết, nút mất doanh thu, và
+    /// không ai phát hiện.
+    function test_tu_choi_snapshot_sai() public {
+        bytes memory pv = abi.encodePacked(
+            uint64(1), keccak256("batch"), keccak256("da"), uint64(812),
+            keccak256("results"), keccak256("resultsData"), m.STORAGE_VK_DIGEST(),
+            keccak256("SO_BIA_DAT"),          // ← snapshot_id sai
+            bytes20(address(this)), bytes32(0), keccak256("newRoot"), uint32(13)
+        );
+        vm.expectRevert(EngramManager.SnapshotMismatch.selector);
+        m.commitEpoch(1, new bytes(356), pv);
+    }
+
+    /// Sổ thành viên phải ĐỔI khi có hợp đồng mới kích hoạt.
+    function test_so_thanh_vien_doi_khi_co_thay_doi() public {
+        bytes32 before = m.membershipLog();
+        _register(4);
+        assertTrue(m.membershipLog() != before, "dang ky nut phai vao so");
     }
 
     /// [SPEC §D.2.4] Chống front-run. Không có 20 byte submitter thì ai đó theo

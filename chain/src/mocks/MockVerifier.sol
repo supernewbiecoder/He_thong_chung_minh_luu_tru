@@ -16,7 +16,7 @@ contract MockVerifier is IEngramVerifier {
 
     error BadProofLength();
 
-    function verifyProof(bytes32, bytes calldata, bytes calldata proofBytes) external pure {
+    function verifyProof(bytes32, bytes calldata, bytes calldata proofBytes) external {
         if (proofBytes.length != GROTH16_PROOF_BYTES) revert BadProofLength();
     }
 }

@@ -258,6 +258,42 @@ def worker_lottery(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def absence_penalty_wei(
+    deals_in_cell: int, price_per_epoch_wei: int, deadlines_per_epoch: int,
+    floor_wei: int = 10**13,
+) -> int:
+    """[CHỐT C2-a] [SPEC §A.4.3] Cắt cọc khi worker vắng mặt.
+
+    Bằng ĐÚNG doanh thu mà ô đó lẽ ra tạo ra — worker chịu đúng thiệt hại nó
+    gây, không hơn.
+
+    ── VÌ SAO KHÔNG DÙNG BỘI SỐ CỐ ĐỊNH ────────────────────────────────────
+
+    Bội số kiểu 10× răn đe rõ hơn, nhưng worker rớt mạng thật thà cũng bị nặng.
+    Mà §J.2.3 đã có đình chỉ 8 deadline làm hình phạt rồi — cắt cọc là để bù
+    thiệt hại, không phải để răn đe lần hai.
+
+    ── SÀN LUÔN THẮNG Ở QUY MÔ THỰC TẾ — đo ra mới thấy ────────────────────
+
+    Ở N=10.000 với D=48, S_ns=16 thì mỗi ô có 13 hợp đồng. Doanh thu một ô là
+
+        13 × 10¹² / 48 = 2,7 × 10¹¹ wei ≈ 0,00000027 ETH ≈ 0,0008 $
+
+    Sàn 10¹³ wei lớn hơn 37 lần. Doanh thu chỉ vượt sàn khi ô có trên ~480 hợp
+    đồng — tức chỉ ở mạng rất lớn hoặc rất ít mảnh.
+
+    Nghĩa là công thức "bằng thiệt hại" GẦN NHƯ KHÔNG BAO GIỜ ÁP DỤNG; trên
+    thực tế `floor_wei` làm toàn bộ công việc răn đe.
+
+    Điều đó nhất quán với §I.1.5: doanh thu mỗi hợp đồng vốn đã rất nhỏ, nên
+    một hình phạt "bằng thiệt hại" không răn đe được gì cả. Giữ công thức vì nó
+    đúng về nguyên tắc và tự động đúng khi mạng lớn lên — nhưng ĐỪNG trình bày
+    nó như cơ chế răn đe chính. Sàn mới là cơ chế răn đe.
+    """
+    revenue = deals_in_cell * price_per_epoch_wei // max(1, deadlines_per_epoch)
+    return max(revenue, floor_wei)
+
+
 def record_outcome(w: WorkerEntry, delivered: bool, deadline: int,
                    miss_threshold: int = DEFAULT_MISS_THRESHOLD,
                    suspension: int = DEFAULT_SUSPENSION_DEADLINES) -> None:

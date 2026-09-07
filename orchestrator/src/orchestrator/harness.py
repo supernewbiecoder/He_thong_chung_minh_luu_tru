@@ -19,6 +19,9 @@ from engram_common.blob import BlobHeader, BlobKind, ObservedBlob, build_namespa
 from engram_common.clock import Clock
 from engram_common.constants import BUNDLE_SIZE_BYTES, PROFILE_SIM, SECTOR_PROFILES
 from engram_common.crypto import derive_beacon, derive_deadline, derive_shard, keccak
+from engram_common.membership import (
+    DealRecord, MembershipEntry, MembershipKind, MembershipRegistry,
+)
 from engram_common.verdict import Verdict
 
 
@@ -122,6 +125,24 @@ class SimNetwork:
                 )
             )
         return self
+
+    def registry(self, epoch: int) -> MembershipRegistry:
+        """[SPEC §D.3] Sổ thành viên — dựng từ cùng nguồn mà hợp đồng dùng.
+
+        Trong bản thật, sổ này công bố lên DA kind=04 và guest tải về rồi đối
+        chiếu với `snapshot_id` on-chain. Ở mô phỏng ta dựng trực tiếp, nhưng
+        vẫn ĐI QUA `verify_registry` để đường mã đó được chạy thật.
+        """
+        entries = [
+            MembershipEntry(MembershipKind.DEAL_ACTIVE, d.deal_id, bytes(32))
+            for d in self.deals
+        ]
+        deals = [
+            DealRecord(d.provider_id, d.deal_id, d.sealed_root,
+                       d.deadline_idx, d.shard, d.declared)
+            for d in self.deals
+        ]
+        return MembershipRegistry(epoch, self.da.height, entries, deals)
 
     def namespace(self, shard: int) -> bytes:
         return build_namespace(BlobKind.BUNDLE, self.chain_id, shard)
