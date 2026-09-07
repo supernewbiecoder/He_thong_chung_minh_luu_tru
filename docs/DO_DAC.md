@@ -118,8 +118,30 @@ batch │ B1 cận dưới │  B3 tổng  │  Engram   │ B1/Eng │ B3/Eng
    20 │   4.430.408 │   541.509 │   512.795 │   8,7× │  1,06×
 ```
 
-**Engram execution đo được là 475.718 ở cả năm mức batch — bằng nhau tuyệt đối,
-không phải xấp xỉ.** Đó là RQ2 được trả lời bằng số đo chứ không bằng lập luận.
+### Bất biến theo *N* — đo riêng, với hợp đồng kích hoạt thật
+
+Bảng trên **không** chứng minh O(1): cột Engram giống nhau vì `expectedDealCount`
+bằng 0 ở mọi mức, tức không có gì thay đổi. Phép đo thật nằm ở
+`test_gas_khong_doi_theo_so_hop_dong`, nơi *N* hợp đồng được kích hoạt thật:
+
+| *N* | gas | lệch |
+|---|---|---|
+| 1 | 439.372 | — |
+| 5 | 439.393 | +21 gas · 0,005 % |
+| 20 | 439.448 | +76 gas · **0,017 %** |
+
+**Không bằng nhau tuyệt đối**, và đừng viết thế trong bài. Không phép đo gas nào
+trên EVM cho ra con số y hệt khi trạng thái storage khác nhau.
+
+Điều có ý nghĩa là **so với baseline ở cùng mức tăng *N***:
+
+```
+N tăng 20 lần  →  Engram  +0,017 %
+                  B3      +619 %      lớn hơn    36.000 lần
+                  B1      +1.725 %    lớn hơn   100.000 lần
+```
+
+Đó mới là cách phát biểu RQ2 đứng vững trước phản biện.
 
 ### Vì sao B1 dùng cận dưới
 
