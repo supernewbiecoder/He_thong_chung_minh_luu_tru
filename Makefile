@@ -9,6 +9,7 @@ export DOCKER_UID := $(shell id -u)
 export DOCKER_GID := $(shell id -g)
 N_DEALS    ?= 20
 N_EPOCHS   ?= 3
+N_SHARDS   ?= 2
 
 preflight:       ## Kiểm xung đột cổng/container TRƯỚC khi chạy trên máy chung
 	@bash scripts/preflight.sh
@@ -69,9 +70,14 @@ check: test-py   ## Đối chiếu mã với đặc tả rồi chạy thử
 	@echo
 	@$(MAKE) --no-print-directory run
 
+# N_SHARDS PHẢI truyền xuống, không ghim cứng.
+#
+# Bản trước ghi `--shards 2` cố định, nên `make run N_SHARDS=4` chạy im lặng với
+# 2 mảnh. Phép quét mảnh cho ra ba lần chạy GIỐNG HỆT NHAU mà không báo gì —
+# loại hỏng tệ nhất, vì nó trông như đã có dữ liệu.
 run:             ## Chạy mô phỏng TRONG TIẾN TRÌNH — không cần Docker, không cần mạng
 	PYTHONPATH=$(PYPATH) python3 -m orchestrator \
-		--deals $(N_DEALS) --epochs $(N_EPOCHS) --shards 2
+		--deals $(N_DEALS) --epochs $(N_EPOCHS) --shards $(N_SHARDS)
 
 check-sol:       ## Kiểm chuỗi Solidity chỉ dùng ASCII
 	@python3 chain/check_ascii.py

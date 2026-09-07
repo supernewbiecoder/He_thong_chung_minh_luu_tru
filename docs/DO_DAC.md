@@ -107,6 +107,37 @@ trong Solidity gồm hàng nghìn phép toán trường và nhiều lần MSM �
 chục triệu gas cho *một* proof, tức vượt trần block ngay ở batch 1. Chính điều đó
 là lý do bài toán này tồn tại.
 
+## Kết quả đo được
+
+```
+batch │ B1 cận dưới │  B3 tổng  │  Engram   │ B1/Eng │ B3/Eng
+    1 │     242.760 │    75.271 │   512.795 │   0,5× │  0,15×
+    2 │     462.920 │    99.813 │   512.795 │   0,9× │  0,20×
+    5 │   1.124.424 │   173.427 │   512.795 │   2,2× │  0,34×
+   10 │   2.226.248 │   296.149 │   512.795 │   4,4× │  0,58×
+   20 │   4.430.408 │   541.509 │   512.795 │   8,7× │  1,06×
+```
+
+**Engram execution đo được là 475.718 ở cả năm mức batch — bằng nhau tuyệt đối,
+không phải xấp xỉ.** Đó là RQ2 được trả lời bằng số đo chứ không bằng lập luận.
+
+### Vì sao B1 dùng cận dưới
+
+Execution của B1 trong khung test **tăng theo bậc hai** — chi phí biên là
+253.532 · 283.013 · 313.255 · 367.998 khi *n* tăng. Nguyên nhân: Solidity mã hoá
+`bytes memory` thêm một lần nữa cho lời gọi ngoài, và mở rộng bộ nhớ tính theo
+`3w + w²/512`. **Một giao dịch thật không có khoản này** — calldata đến thẳng.
+
+Nên bảng chỉ dùng **intrinsic** cho B1: 220.416 gas mỗi proof, tuyến tính, và là
+chi phí không thể tránh của việc đưa 13.776 byte lên chuỗi. Đó là **cận dưới** —
+B1 thật còn đắt hơn.
+
+Dùng cận dưới là chọn hướng **bất lợi cho kết luận của mình**. Nếu Engram vẫn
+thắng từ batch 3 khi so với cận dưới của baseline, kết luận vững hơn nhiều.
+
+B3 thì sạch cả hai cột — chi phí biên 23.512–23.520 ổn định, khớp SSTORE 22.100
+cộng phụ phí. Calldata của nó nhỏ nên không có hiện tượng trên.
+
 ## Hai điểm giao — trình bày trung thực
 
 ```bash
@@ -115,10 +146,10 @@ forge test --match-test diem_giao -vv
 
 Ở batch nhỏ **Engram đắt hơn**:
 
-| So với | Engram rẻ hơn từ |
-|---|---|
-| B1 gửi raw calldata | batch ≥ **3** |
-| B3 chỉ lưu băm | batch ≥ **23** |
+| So với | Engram rẻ hơn từ | Đo được |
+|---|---|---|
+| B1 gửi raw calldata | batch ≥ **3** | điểm giao 2,2 |
+| B3 chỉ lưu băm | batch ≥ **19** | điểm giao 18,7 |
 
 Nêu thẳng. Nó cho thấy đóng góp là **tính mở rộng**, không phải rẻ tuyệt đối, và
 nhất quán với §I.1.5 — mạng cần 140 hợp đồng trên L2 mới hoà vốn. Hai con số cùng
@@ -172,8 +203,40 @@ for n in 20 50 100 200; do make run N_DEALS=$n N_EPOCHS=2; done
 for s in 1 2 4 8; do make run N_DEALS=100 N_SHARDS=$s N_EPOCHS=2; done
 ```
 
-Nghịch lý cần kiểm: **mạng nhỏ phải chia ít**, vì chia nhỏ nghĩa là trả chi phí cố
-định *f* = 45,385 × 10⁹ nhiều lần cho những mảnh gần rỗng.
+### Kết quả đo được
+
+Quét *N* ở *S*=2, hai epoch:
+
+| *N* | chu kỳ/epoch | biên mỗi hợp đồng | phần cố định |
+|---|---|---|---|
+| 20 | 1.186,7 × 10⁹ | — | **62,1 %** |
+| 50 | 1.862,0 × 10⁹ | 22,51 × 10⁹ | 39,6 % |
+| 100 | 2.987,5 × 10⁹ | 22,51 × 10⁹ | 24,7 % |
+
+Biên đo được **22,51 × 10⁹** khớp chính xác mô hình `r × m = 2 × 11,255`. Hồi quy
+`f + m·N` từ §I.1.6 được **xác nhận bằng mô phỏng**, không chỉ bằng đo vi mô.
+
+Quét *S* ở *N*=100:
+
+| *S* | số ô | chu kỳ/epoch | phần cố định | NFR-05 |
+|---|---|---|---|---|
+| 1 | 8 | 2.608,0 × 10⁹ | 13,9 % | đạt |
+| 2 | 16 | 2.793,8 × 10⁹ | 24,4 % | vượt |
+| 4 | 32 | 3.620,4 × 10⁹ | 39,2 % | vượt |
+| 8 | 64 | 5.079,8 × 10⁹ | 56,3 % | vượt |
+
+**Chia nhiều mảnh làm tổng chi phí TĂNG** — 8 mảnh tốn gấp 1,95 lần 1 mảnh, dù
+cùng 100 hợp đồng. Nghịch lý: **mạng nhỏ phải chia ít**, vì chia nhỏ nghĩa là trả
+chi phí cố định *f* = 45,385 × 10⁹ nhiều lần cho những mảnh gần rỗng.
+
+Ở *N*=100 thì NFR-05 (`D·S_ns ≤ N/20`) cho phép tối đa `S_ns ≤ 1,2` — tức **chỉ 1
+mảnh**. Cấu hình mặc định 2 mảnh đã vi phạm, và số đo cho thấy đúng: phần cố định
+nhảy từ 13,9 % lên 24,4 %.
+
+Một quan sát phụ đáng ghi: ở *S*=8, số blob mạo danh bị loại giảm từ 10 xuống 5 —
+kẻ tấn công nhắm một hợp đồng, và hợp đồng đó chỉ nằm trong một mảnh, nên chia
+nhiều mảnh **thu hẹp diện tấn công**. Đó là mặt lợi của việc chia nhỏ, đối trọng
+với chi phí cố định.
 
 **Proving hardware** — `c_sha` quét sẵn ba giá trị mỗi lần chạy. Cột `sha_cycles`
 trong CSV.
