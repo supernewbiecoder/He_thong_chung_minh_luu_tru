@@ -152,7 +152,7 @@ contract EngramManagerTest is Test {
             bytes20(submitter),               // 208..228
             prevRoot,                         // 228..260
             keccak256("newRoot"),             // 260..292
-            uint32(13)                        // 292..296
+            m.expectedDealCount()             // 292..296  ← phải khớp on-chain
         );
     }
 
@@ -310,6 +310,39 @@ contract EngramManagerTest is Test {
         assertTrue(m.membershipLog() != before, "dang ky nut phai vao so");
     }
 
+    /// [SỬA — nhận xét phản biện] numVerified sai thì hợp đồng TỪ CHỐI.
+    ///
+    /// Bản trước chỉ lưu numVerified rồi phát sự kiện. Guest báo 1 cho epoch
+    /// có 10.000 hợp đồng thì hợp đồng vẫn nhận — "một bằng chứng hợp lệ"
+    /// không đồng nghĩa "toàn bộ nghĩa vụ lưu trữ đã hoàn thành".
+    function test_tu_choi_khi_chua_xet_het() public {
+        bytes memory pv = abi.encodePacked(
+            uint64(1), keccak256("batch"), keccak256("da"), uint64(812),
+            keccak256("results"), keccak256("resultsData"), m.STORAGE_VK_DIGEST(),
+            m.snapshotForCurrentEpoch(), bytes20(address(this)), bytes32(0),
+            keccak256("newRoot"),
+            uint32(999)                       // ← bịa, không khớp expectedDealCount
+        );
+        vm.expectRevert(EngramManager.CoverageIncomplete.selector);
+        m.commitEpoch(1, new bytes(356), pv);
+    }
+
+    /// [SỬA — nhận xét phản biện] Danh sách quyết toán phải chứng minh được là
+    /// CÓ TRÊN DA, không chỉ được cam kết.
+    ///
+    /// Bản trước giải mã results_data_root rồi bỏ đó. Aggregator cam kết một
+    /// results_root mà danh sách đầy đủ không ai tải về được → không ai rút
+    /// tiền được, và cũng không ai chứng minh được nó sai.
+    function test_tu_choi_khi_manifest_khong_co_tren_da() public {
+        m.commitEpoch(1, new bytes(356), _pv(1, address(this), bytes32(0), m.STORAGE_VK_DIGEST()));
+
+        IBlobstream.DataRootTuple memory t;
+        t.dataRoot = keccak256("DATA_ROOT_KHAC");   // ← không phải resultsDataRoot
+        IBlobstream.BinaryMerkleProof memory p;
+        vm.expectRevert(EngramManager.ResultsNotAvailable.selector);
+        m.finalizeEpoch(1, 812, t, p);
+    }
+
     /// [SPEC §D.2.4] Chống front-run. Không có 20 byte submitter thì ai đó theo
     /// dõi mempool, sao chép giao dịch, đẩy phí cao hơn và nộp trước.
     function test_tu_choi_khi_submitter_khong_khop() public {
@@ -346,6 +379,7 @@ contract EngramManagerTest is Test {
         blobstream.setOutage(true);
 
         IBlobstream.DataRootTuple memory t;
+        t.dataRoot = keccak256("resultsData");   // khớp results_data_root
         IBlobstream.BinaryMerkleProof memory p;
         vm.expectRevert(EngramManager.BlobstreamRejected.selector);
         m.finalizeEpoch(1, 812, t, p);

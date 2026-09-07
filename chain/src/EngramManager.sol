@@ -153,6 +153,9 @@ contract EngramManager {
         EpochState state;
         bytes32 batchRoot;
         bytes32 resultsRoot;
+        /// data_root của block Celestia chứa danh sách quyết toán đầy đủ.
+        /// `finalizeEpoch` đối chiếu nó với tuple Blobstream — xem ghi chú ở đó.
+        bytes32 resultsDataRoot;
         bytes32 daCommitment;
         uint64 daNonce;
         bytes32 newStateRoot;
@@ -217,6 +220,26 @@ contract EngramManager {
 
     /// Tích luỹ mọi thay đổi thành viên. Cập nhật O(1), ~100 gas mỗi thao tác.
     bytes32 public membershipLog;
+
+    /// Số hợp đồng ĐANG HOẠT ĐỘNG — cập nhật cùng lúc với membershipLog.
+    ///
+    /// [SỬA — nhận xét phản biện] Bản trước chỉ lưu `numVerified` từ public
+    /// values rồi phát sự kiện, KHÔNG đối chiếu với gì. Guest báo numVerified=1
+    /// cho một epoch có 10.000 hợp đồng thì hợp đồng vẫn nhận.
+    ///
+    /// Nghĩa là "một bằng chứng hợp lệ" KHÔNG đồng nghĩa "toàn bộ nghĩa vụ lưu
+    /// trữ đã hoàn thành" — đúng chỗ thầy chỉ ra.
+    ///
+    /// Chuỗi tin cậy đầy đủ cần cả bốn mắt, và mắt thứ tư là mắt này:
+    ///   ① khoá chương trình ghim cứng      → guest chạy đúng chương trình
+    ///   ② snapshot_id ghim on-chain        → guest dùng đúng sổ thành viên
+    ///   ③ guest dựng expected từ sổ        → không nhận danh sách từ host
+    ///   ④ numVerified == activeDealCount   → guest đã xét HẾT, không bớt
+    uint32 public activeDealCount;
+
+    /// Đóng băng cùng `snapshotForCurrentEpoch`, để `numVerified` đối chiếu
+    /// đúng ảnh chụp mà epoch này được chứng minh trên đó.
+    uint32 public expectedDealCount;
 
     /// Giá trị đã đóng băng cho epoch đang chứng minh.
     ///
@@ -283,7 +306,9 @@ contract EngramManager {
     error AlreadyClaimed();
     error ClaimOutOfOrder();
     error BadMerkleProof();
-    error SnapshotMismatch();   // [SPEC §D.3] sổ thành viên không khớp
+    error SnapshotMismatch();     // [SPEC §D.3] sổ thành viên không khớp
+    error CoverageIncomplete();   // guest chưa xét hết tập hợp đồng
+    error ResultsNotAvailable();  // danh sách quyết toán chưa chứng minh có trên DA
 
     constructor(
         IEngramVerifier _verifier,
@@ -463,6 +488,7 @@ contract EngramManager {
         d.state = DealState.Active;
         // Chỉ hợp đồng ĐÃ KÍCH HOẠT mới vào tập chứng minh, nên đây mới là
         // thời điểm nó thật sự đổi thành viên.
+        activeDealCount += 1;
         _logMembership(M_DEAL_ACTIVE, dealId, bytes32(uint256(d.deadlineIdx)));
         emit DealActivated(dealId);
     }
@@ -478,6 +504,7 @@ contract EngramManager {
         d.state = DealState.Aborted;
         providers[d.provider].usedSlots -= 1;
 
+        if (d.state == DealState.Active && activeDealCount > 0) activeDealCount -= 1;
         _logMembership(M_DEAL_CLOSED, dealId, bytes32(0));
         (bool ok,) = payable(d.customer).call{value: refund}("");
         require(ok, "hoan tien that bai");
@@ -518,6 +545,13 @@ contract EngramManager {
         // host trình gì cũng được, và bỏ sót hợp đồng thành vô hình.
         if (pv.snapshotId != snapshotForCurrentEpoch) revert SnapshotMismatch();
 
+        // ④c [SỬA] GUEST ĐÃ XÉT HẾT CHƯA.
+        //
+        // Không có phép kiểm này thì guest báo numVerified=1 cho epoch có
+        // 10.000 hợp đồng và hợp đồng vẫn nhận — "một bằng chứng hợp lệ"
+        // không đồng nghĩa "toàn bộ nghĩa vụ đã hoàn thành".
+        if (pv.numVerified != expectedDealCount) revert CoverageIncomplete();
+
         // ⑤ Phép tính nặng nhất. Bằng chứng KHÔNG chứa 296 byte — nó chỉ cam kết
         //    vào BĂM của chúng. 296 byte đi riêng qua calldata, hợp đồng băm lại
         //    rồi đối chiếu. [SPEC Hình D.2]
@@ -528,6 +562,7 @@ contract EngramManager {
             state: EpochState.Committed,
             batchRoot: pv.batchRoot,
             resultsRoot: pv.resultsRoot,
+            resultsDataRoot: pv.resultsDataRoot,
             daCommitment: pv.daCommitment,
             daNonce: pv.daNonce,
             newStateRoot: pv.newStateRoot,
@@ -540,6 +575,7 @@ contract EngramManager {
         // Đóng băng sổ cho epoch KẾ TIẾP. Đây là thời điểm gần biên epoch nhất
         // mà hợp đồng thật sự chạy — xem ghi chú ở `snapshotForCurrentEpoch`.
         snapshotForCurrentEpoch = membershipLog;
+        expectedDealCount = activeDealCount;
         emit SnapshotFrozen(epoch + 1, membershipLog);
 
         emit EpochCommitted(epoch, pv.newStateRoot, pv.numVerified);
@@ -566,6 +602,18 @@ contract EngramManager {
         EpochRecord storage e = epochs[epoch];
         if (e.state != EpochState.Committed) revert EpochNotCommitted();
         if (e.daNonce != uint64(blobstreamNonce)) revert BlobstreamRejected();
+
+        // [SỬA — nhận xét phản biện] DANH SÁCH QUYẾT TOÁN PHẢI CHỨNG MINH ĐƯỢC
+        // LÀ CÓ TRÊN DA.
+        //
+        // Bản trước giải mã `results_data_root` rồi BỎ ĐÓ. Hệ quả: aggregator
+        // cam kết một `results_root` mà danh sách đầy đủ không ai tải về được,
+        // nên không ai rút tiền được và cũng không ai chứng minh được nó sai.
+        //
+        // Giờ tuple Blobstream phải trỏ ĐÚNG data_root của block chứa danh
+        // sách quyết toán. Chứng thực Blobstream vì thế bao luôn tính sẵn có
+        // của manifest, không chỉ của các blob bằng chứng.
+        if (tuple_.dataRoot != e.resultsDataRoot) revert ResultsNotAvailable();
 
         if (!blobstream.verifyAttestation(blobstreamNonce, tuple_, proof)) {
             revert BlobstreamRejected();
