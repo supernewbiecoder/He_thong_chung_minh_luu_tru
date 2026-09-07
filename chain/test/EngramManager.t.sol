@@ -282,12 +282,25 @@ contract EngramManagerTest is Test {
         for (uint256 k; k < 3; ++k) {
             EngramManager mgr = _fresh();
             _activateDeals(mgr, ns[k]);
-            assertEq(uint256(mgr.expectedDealCount()), ns[k], "so hop dong on-chain phai bang N");
 
-            bytes memory pv = _pvFor(mgr, 1, bytes32(0));
+            // [SPEC §D.3.5] `expectedDealCount` VẪN LÀ 0 lúc này.
+            //
+            // Sổ thành viên đóng băng tại `commitEpoch` của epoch TRƯỚC, nên
+            // hợp đồng kích hoạt trong epoch 1 chỉ vào tập chứng minh của
+            // epoch 2. Đó là điểm đóng băng đã chốt ở §D.3.5, và test này là
+            // chỗ nó lộ ra rõ nhất.
+            assertEq(uint256(mgr.expectedDealCount()), 0, "epoch 1 chua co hop dong nao");
+
             bytes memory proof = new bytes(356);
+
+            // Epoch 1 — đóng băng sổ, chưa đo.
+            mgr.commitEpoch(1, proof, _pvFor(mgr, 1, bytes32(0)));
+            assertEq(uint256(mgr.expectedDealCount()), ns[k], "epoch 2 phai co dung N hop dong");
+
+            // Epoch 2 — GIỜ mới đo, với N hợp đồng thật trong tập chứng minh.
+            bytes memory pv2 = _pvFor(mgr, 2, mgr.currentStateRoot());
             uint256 g0 = gasleft();
-            mgr.commitEpoch(1, proof, pv);
+            mgr.commitEpoch(2, proof, pv2);
             used[k] = g0 - gasleft();
         }
 
@@ -297,6 +310,45 @@ contract EngramManagerTest is Test {
 
         assertEq(used[0], used[1], "gas phai khong doi tu N=1 sang N=5");
         assertEq(used[1], used[2], "gas phai khong doi tu N=5 sang N=20");
+    }
+
+    /// Gas ĐẦY ĐỦ, có phép ghép cặp Groth16 thật.
+    ///
+    /// `PairingCostVerifier` chạy đúng đường tính toán Groth16 — hai ecMul,
+    /// một ecAdd, một ecPairing 4 cặp — bằng điểm sinh hợp lệ trên đường cong.
+    /// Kết quả ghép cặp vô nghĩa, nhưng GAS là thật: `ecPairing` tốn đúng bằng
+    /// nhau dù trả về 1 hay 0.
+    function test_gas_day_du_co_ghep_cap() public {
+        EngramManager m2 = _fresh();
+        bytes memory pv = _pvFor(m2, 1, bytes32(0));
+
+        uint256 g0 = gasleft();
+        m2.commitEpoch(1, new bytes(356), pv);
+        uint256 full = g0 - gasleft();
+
+        console.log("commitEpoch CO ghep cap  :", full);
+        console.log("K.1 execution do duoc    :", uint256(477907));
+        assertGt(full, 400000, "phai vuot 400k khi co ghep cap that");
+    }
+
+    /// [SPEC §D.3 / §J.2.6] snapshot_id sai thì hợp đồng TỪ CHỐI.
+    function test_tu_choi_snapshot_sai() public {
+        bytes memory pv = abi.encodePacked(
+            uint64(1), keccak256("batch"), keccak256("da"), uint64(812),
+            keccak256("results"), keccak256("resultsData"), m.STORAGE_VK_DIGEST(),
+            keccak256("SO_BIA_DAT"),          // ← snapshot_id sai
+            bytes20(address(this)), bytes32(0), keccak256("newRoot"),
+            m.expectedDealCount()
+        );
+        vm.expectRevert(EngramManager.SnapshotMismatch.selector);
+        m.commitEpoch(1, new bytes(356), pv);
+    }
+
+    /// Sổ thành viên phải ĐỔI khi có thay đổi thành viên.
+    function test_so_thanh_vien_doi_khi_co_thay_doi() public {
+        bytes32 before = m.membershipLog();
+        _register(4);
+        assertTrue(m.membershipLog() != before, "dang ky nut phai vao so");
     }
 
     /// [SỬA — nhận xét phản biện] numVerified sai thì hợp đồng TỪ CHỐI.
