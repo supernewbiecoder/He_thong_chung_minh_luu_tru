@@ -94,10 +94,20 @@ contract BaselinesTest is Test {
     // lặp lọt vào phép đo. Đó là lý do lần chạy đầu cho B1 tại batch 1 ra
     // 3.630.440 thay vì ~267.000 — sai gấp 13 lần.
     //
-    // Phải tách hai câu lệnh:
+    // ── TÁCH CÂU LỆNH VẪN CHƯA ĐỦ ──────────────────────────────────────
     //
-    //     uint256 exec = g0 - gasleft();                  // ĐÚNG
-    //     uint256 total = exec + _intrinsic(cd);
+    // Lần sửa thứ nhất tách thành hai câu lệnh, nhưng số vẫn sai gấp 2,15 lần.
+    // Lý do: hàm này là `pure`, nên trình tối ưu ĐƯỢC PHÉP di chuyển nó, và
+    // `gasleft()` không được coi là rào cản thứ tự cho phép tính thuần tuý.
+    //
+    // Cách duy nhất chắc chắn: TÍNH TRƯỚC, cất vào biến, rồi mới đo.
+    //
+    //     uint256 intr = _intrinsic(cd);    // ← ngoài vùng đo, là GIÁ TRỊ
+    //     uint256 g0 = gasleft();
+    //     target.call(...);
+    //     uint256 total = (g0 - gasleft()) + intr;
+    //
+    // Lúc này vế phải chỉ còn phép cộng hai giá trị — không còn gì để hoist.
     function _intrinsic(bytes memory data) internal pure returns (uint256 g) {
         g = TX_BASE;
         for (uint256 i; i < data.length; ++i) {
@@ -128,10 +138,10 @@ contract BaselinesTest is Test {
             // ── B1 ──
             bytes memory blob = _blob(n);
             bytes memory cd1 = abi.encodeCall(B1DirectCalldata.submit, (blob));
+            uint256 intr1 = _intrinsic(cd1);         // TÍNH TRƯỚC — xem ghi chú
             uint256 g0 = gasleft();
             b1.submit(blob);
-            uint256 exec1 = g0 - gasleft();          // TÁCH RIÊNG — xem _intrinsic
-            uint256 b1Total = exec1 + _intrinsic(cd1);
+            uint256 b1Total = (g0 - gasleft()) + intr1;
 
             // ── B3 ──
             bytes32[] memory ids = new bytes32[](n);
@@ -141,10 +151,10 @@ contract BaselinesTest is Test {
                 hs[i] = keccak256(abi.encodePacked("h", i, k));
             }
             bytes memory cd3 = abi.encodeCall(B3HashOnly.submit, (ids, hs));
+            uint256 intr3 = _intrinsic(cd3);         // TÍNH TRƯỚC
             g0 = gasleft();
             b3.submit(ids, hs);
-            uint256 exec3 = g0 - gasleft();          // TÁCH RIÊNG
-            uint256 b3Total = exec3 + _intrinsic(cd3);
+            uint256 b3Total = (g0 - gasleft()) + intr3;
 
             // ── Engram: KHÔNG phụ thuộc n ──
             // Engram đo với PairingCostVerifier — tức CÓ chi phí Groth16 thật,
@@ -167,11 +177,11 @@ contract BaselinesTest is Test {
         bytes memory pv = _pv(m, 1, bytes32(0));
         bytes memory proof = new bytes(356);
         bytes memory cd = abi.encodeCall(EngramManager.commitEpoch, (1, proof, pv));
+        uint256 intr = _intrinsic(cd);               // TÍNH TRƯỚC
         uint256 g0 = gasleft();
         m.commitEpoch(1, proof, pv);
-        uint256 exec = g0 - gasleft();               // TÁCH RIÊNG
         salt; // giữ chữ ký ổn định
-        return exec + _intrinsic(cd);
+        return (g0 - gasleft()) + intr;
     }
 
     function _pv(EngramManager m, uint64 epoch, bytes32 prevRoot)
@@ -209,10 +219,10 @@ contract BaselinesTest is Test {
         // với §I.1.5 — mạng cần 140 hợp đồng trên L2 mới hoà vốn.
         bytes memory blob1 = _blob(1);
         bytes memory cd1 = abi.encodeCall(B1DirectCalldata.submit, (blob1));
+        uint256 intr = _intrinsic(cd1);              // TÍNH TRƯỚC
         uint256 g0 = gasleft();
         b1.submit(blob1);
-        uint256 exec = g0 - gasleft();               // TÁCH RIÊNG
-        uint256 one = exec + _intrinsic(cd1);
+        uint256 one = (g0 - gasleft()) + intr;
 
         uint256 eng = _engramOnce(99);
         console.log("B1 tai batch=1 :", one);
@@ -229,12 +239,13 @@ contract BaselinesTest is Test {
         bytes memory proof = new bytes(356);
         bytes memory cd = abi.encodeCall(EngramManager.commitEpoch, (1, proof, pv));
 
+        uint256 intr = _intrinsic(cd);               // TÍNH TRƯỚC
         uint256 g0 = gasleft();
         engramPairing.commitEpoch(1, proof, pv);
         uint256 exec = g0 - gasleft();
 
         console.log("execution      :", exec);
-        console.log("intrinsic      :", _intrinsic(cd));
-        console.log("TONG           :", exec + _intrinsic(cd));
+        console.log("intrinsic      :", intr);
+        console.log("TONG           :", exec + intr);
     }
 }
