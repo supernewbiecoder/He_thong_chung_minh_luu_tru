@@ -54,6 +54,20 @@ class ShardResult:
 
     deadline: int
     shard: int
+
+    expected_count: int = 0
+    """|E_cell| — số hợp đồng mà ô này PHẢI xét, lấy từ sổ thành viên.
+
+    ── VÌ SAO TRƯỜNG NÀY PHẢI CÓ  [SỬA — nhận xét phản biện P0.3] ──────────
+
+    Không có nó, aggregator chỉ biết một ô ĐÃ TRẢ LỜI, không biết ô đó trả lời
+    ĐỦ hay THIẾU. Một worker xét 3 trong 13 hợp đồng rồi trả về vẫn đếm là "ô
+    đã phủ".
+
+    Giá trị này KHÔNG do worker tự khai: guest tự dựng E_cell từ sổ thành viên
+    đã đối chiếu snapshot_id, nên nó là hệ quả của sổ chứ không phải đầu vào.
+    """
+
     verdicts: dict[tuple[bytes, bytes], Verdict] = field(default_factory=dict)
     coverage: CoverageProof | None = None
     filter_stats: FilterStats | None = None
@@ -176,6 +190,7 @@ def verify_shard(
     return ShardResult(
         deadline=deadline,
         shard=shard,
+        expected_count=len(expected),   # |E_cell| từ sổ, không phải len(verdicts)
         verdicts=verdicts,
         coverage=cov,
         filter_stats=stats,

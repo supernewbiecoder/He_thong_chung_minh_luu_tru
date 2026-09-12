@@ -54,7 +54,36 @@ class EpochVerdicts:
     Dư thừa hỏi: "có mấy bản?" — câu hỏi TÍNH SỐNG. Hai câu khác nhau."""
 
     covered_shards: set[int] = field(default_factory=set)
+
+    cell_expected: dict[tuple[int, int], int] = field(default_factory=dict)
+    """(deadline, mảnh) → |E_cell| mà các bản ChildProof của ô đó khai.
+
+    [SỬA — nhận xét phản biện P0.3] Giữ riêng theo Ô, không cộng dồn thành một
+    tổng. Cộng dồn thì một ô khai thừa bù được cho một ô khai thiếu, và tổng
+    vẫn khớp.
+    """
+
     stats: ReconcileStats = field(default_factory=ReconcileStats)
+
+
+class CardinalityMismatch(RuntimeError):
+    """Bản số phán quyết không khớp tập kỳ vọng.
+
+    ── LỖ HỔNG PHÉP KIỂM NÀY ĐÓNG  [SỬA — nhận xét phản biện P0.3] ─────────
+
+    Bản trước chỉ kiểm `num_verified > 0` rồi về sau là
+    `num_verified == expectedDealCount`, trong đó num_verified = len(leaves).
+
+    Cả hai đều KHÔNG chặn được:
+
+      · một ô xét 3 trong 13 hợp đồng rồi trả về — ô vẫn tính là "đã phủ"
+      · một ô nhồi thêm hợp đồng ngoài phạm vi để bù cho ô khác trả thiếu,
+        giữ cho TỔNG vẫn khớp
+      · hai ChildProof của cùng một ô dựng từ hai sổ khác nhau
+
+    Phép kiểm đúng phải theo TỪNG Ô, và phải so với |E_cell| lấy từ sổ chứ
+    không phải với số lá mà worker tự sinh ra.
+    """
 
 
 def reconcile_shard_results(results: list) -> EpochVerdicts:
@@ -62,8 +91,33 @@ def reconcile_shard_results(results: list) -> EpochVerdicts:
     out = EpochVerdicts()
     for res in results:
         out.stats.childproofs_seen += 1
-        out.covered_cells.add((res.deadline, res.shard))
+        cell = (res.deadline, res.shard)
+        out.covered_cells.add(cell)
         out.covered_shards.add(res.shard)
+
+        # ── Hai bản của CÙNG một ô phải khai CÙNG |E_cell| ──────────────
+        #
+        # Cả hai worker đều dựng E_cell từ sổ thành viên đã đối chiếu
+        # snapshot_id, nên nếu trung thực thì con số phải trùng. Lệch nhau
+        # nghĩa là ít nhất một bên dùng sổ khác — hoặc bịa.
+        prev_exp = out.cell_expected.get(cell)
+        if prev_exp is None:
+            out.cell_expected[cell] = res.expected_count
+        elif prev_exp != res.expected_count:
+            raise CardinalityMismatch(
+                f"ô {cell}: hai ChildProof khai {prev_exp} và "
+                f"{res.expected_count} hợp đồng kỳ vọng"
+            )
+
+        # ── Số phán quyết trả về phải ĐÚNG BẰNG |E_cell| ────────────────
+        #
+        # Thiếu: worker xét một phần rồi trả về.
+        # Thừa : worker nhồi hợp đồng ngoài ô mình để bù cho ô khác.
+        if len(res.verdicts) != res.expected_count:
+            raise CardinalityMismatch(
+                f"ô {cell}: trả về {len(res.verdicts)} phán quyết "
+                f"nhưng khai {res.expected_count} hợp đồng kỳ vọng"
+            )
         for key, v in res.verdicts.items():
             prev = out.verdicts.get(key)
             if prev is None:

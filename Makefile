@@ -61,7 +61,8 @@ test-py:         ## Test Python, không cần Docker
 	          common/tests/test_membership.py \
 	          provider/tests/test_fanin_closure.py \
 	          worker/tests/test_lottery.py \
-	          aggregator/tests/test_circuit_breaker.py; do \
+	          aggregator/tests/test_circuit_breaker.py \
+	          aggregator/tests/test_cardinality.py; do \
 	  printf "  %-46s" "$$t"; \
 	  PYTHONPATH=$(PYPATH) python3 $$t >/dev/null 2>&1 && echo "OK" || { echo "LỖI"; exit 1; }; \
 	done

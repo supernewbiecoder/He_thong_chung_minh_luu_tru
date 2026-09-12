@@ -93,6 +93,13 @@ def aggregate_epoch(
             raise CoverageGapError(
                 f"thiếu ChildProof cho {len(missing)} ô: {sorted(missing)[:3]}…"
             )
+        extra = ev.covered_cells - expected_cells
+        if extra:
+            # Ô ngoài tập kỳ vọng: worker nhồi thêm để đẩy num_verified lên.
+            raise CoverageGapError(
+                f"có ChildProof cho {len(extra)} ô KHÔNG thuộc epoch này: "
+                f"{sorted(extra)[:3]}…"
+            )
 
     # Guest TỰ TÍNH results_root từ biến verdict — không nhận từ host.
     leaves: list[SettlementLeaf] = []
@@ -109,6 +116,27 @@ def aggregate_epoch(
             )
         )
     results_root = merkle_root([lf.digest() for lf in leaves])
+
+    # ── MẮT XÍCH ④ [SỬA — nhận xét phản biện P0.3] ─────────────────────────
+    #
+    # num_verified phải lấy từ SỔ, không lấy từ số lá guest tự sinh ra.
+    #
+    # `len(leaves)` đếm phán quyết mà guest TẠO RA. Một guest sai hoặc gian có
+    # thể tạo ra đúng số lá mà nội dung chẳng liên quan gì tới nghĩa vụ thật —
+    # ví dụ bỏ hẳn một mảnh rồi đánh NONE cho mọi hợp đồng trong đó.
+    #
+    # Σ|E_cell| thì khác: mỗi |E_cell| dựng từ sổ thành viên đã đối chiếu
+    # snapshot_id, và reconcile_shard_results đã kiểm từng ô trả về đúng bản số.
+    # Nên tổng này là hệ quả của SỔ, không phải của guest.
+    num_verified = sum(ev.cell_expected.values())
+
+    if num_verified != len(leaves):
+        # Không bao giờ xảy ra nếu các phép kiểm trên đã chạy — giữ lại như
+        # một chốt chặn cuối, vì đây là bất biến quan trọng nhất của cả hệ.
+        raise CoverageGapError(
+            f"Σ|E_cell| = {num_verified} nhưng có {len(leaves)} lá quyết toán"
+        )
+
 
     # [SPEC §J.1.1] Chuỗi trạng thái — mọi trường quan trọng phải nằm trong đó,
     # nếu không chúng có thể đổi mà không ai phát hiện khi kiểm lại từ đầu.
@@ -132,7 +160,7 @@ def aggregate_epoch(
         submitter=submitter,
         prev_state_root=prev_state_root,
         new_state_root=new_state_root,
-        num_verified=len(leaves),
+        num_verified=num_verified,   # từ Σ|E_cell|, KHÔNG phải len(leaves)
     )
 
     # [CHỐT D3] Bằng chứng giả có ĐÚNG kích thước thật, nên calldata và gas THẬT.
