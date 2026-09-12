@@ -152,12 +152,13 @@ contract EngramManagerTest is Test {
             bytes20(submitter),               // 208..228
             prevRoot,                         // 228..260
             keccak256("newRoot"),             // 260..292
-            m.expectedDealCount()             // 292..296  ← phải khớp on-chain
+            m.expectedDealCount(),            // 292..296  ← phải khớp on-chain
+            uint8(0)                          // 296..297  window_saturation
         );
     }
 
-    function test_public_values_dung_296_byte() public view {
-        assertEq(_pv(1, address(this), bytes32(0), m.STORAGE_VK_DIGEST()).length, 296);
+    function test_public_values_dung_297_byte() public view {
+        assertEq(_pv(1, address(this), bytes32(0), m.STORAGE_VK_DIGEST()).length, 297);
     }
 
     function test_commit_epoch_va_do_gas() public {
@@ -251,7 +252,7 @@ contract EngramManagerTest is Test {
             );
             vm.prank(prov);
             mgr.registerSealed(id, keccak256("s"), keccak256("pr"));
-            mgr.activate(id, new bytes(356), new bytes(296));
+            mgr.activate(id, new bytes(356), new bytes(297));
         }
     }
 

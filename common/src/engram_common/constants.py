@@ -334,11 +334,12 @@ BUNDLE_SIZE_BYTES = 13_776
 GROTH16_PROOF_BYTES = 356
 """[ĐO] artifact Groth16 thật."""
 
-PUBLIC_VALUES_BYTES = 296
+PUBLIC_VALUES_BYTES = 297
 """[SPEC §D.2.1] 11 trường. Xem public_values.py cho bố cục byte."""
 
-CALLDATA_BYTES = 844
-"""[ĐO] 356 + 296 + mào đầu ABI."""
+CALLDATA_BYTES = 868
+"""[ĐO] 356 + 297 + mào đầu ABI. Đệm ABI làm tròn 297 lên 320 y như 296,
+nên thêm byte này KHÔNG đổi độ dài calldata."""
 
 COMMIT_EPOCH_GAS = 487_109
 """[ĐO] Biên lai giao dịch thật. KHÔNG ĐỔI qua bốn bậc độ lớn của N — biến
@@ -482,3 +483,16 @@ def assert_distinct_piece_roots(piece_roots: list[bytes]) -> None:
             "Một bên nắm nhiều nút sẽ khử trùng lặp bản thô và bạn mất phần lớn "
             "độ bền đã trả tiền. Xem UC-01 ghi chú thiết kế."
         )
+
+
+# ── Ngưỡng nghẽn DA ───────────────────────────────────────────────────────
+# Guest xuất `window_saturation` ∈ [0,255]: tỉ lệ block trong cửa sổ có square
+# đạt cỡ tối đa, tức dấu hiệu Celestia bị lấp đầy. Hợp đồng so với ngưỡng này
+# và KHÔNG trả hoa hồng phạt cho epoch vượt ngưỡng.
+#
+# LÝ DO: dưới nghẽn DA, nút trung thực không đăng được bằng chứng và bị đánh
+# ABSENT/FAIL hàng loạt. Hoa hồng 5 % biến việc gây nghẽn thành một khoản THU,
+# và khoản thu đó tăng theo N. Cắt hoa hồng là cắt chân "thu được" của kẻ tấn
+# công, mà KHÔNG phải hạ mức phạt — mức phạt còn phải chặn nút xoá dữ liệu.
+SQUARE_SATURATED_MIN_ROOTS = 1024   # square ≥ 512×512 coi là "đầy"
+WINDOW_SATURATION_THRESHOLD = 179   # ≈ 70 % số block trong cửa sổ

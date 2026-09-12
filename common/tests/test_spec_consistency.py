@@ -49,19 +49,30 @@ def _close(actual: float, spec: float, tol: float = 0.03) -> bool:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def test_public_values_296_byte():
+def test_public_values_297_byte():
     """[SPEC §D.2.1] Bố cục PHẢI khớp bit-để-bit với _decodePublicValues
     trong EngramManager.sol. Lệch là bằng chứng hợp lệ bị từ chối im lặng."""
     pv = PublicValues(1, b"\x01" * 32, b"\x02" * 32, 1, b"\x03" * 32, b"\x04" * 32,
-                      b"\x05" * 32, b"\x06" * 32, b"\x07" * 20, b"\x08" * 32, b"\x09" * 32, 1)
-    assert len(pv.pack()) == 296
+                      b"\x05" * 32, b"\x06" * 32, b"\x07" * 20, b"\x08" * 32, b"\x09" * 32, 1,
+                      200)
+    assert len(pv.pack()) == 297
     assert PublicValues.unpack(pv.pack()) == pv
 
 
-def test_calldata_844_byte():
-    """[SPEC §K.1] 356 Groth16 + 296 public values + mào đầu ABI."""
-    assert C.GROTH16_PROOF_BYTES + C.PUBLIC_VALUES_BYTES == 652
-    assert C.CALLDATA_BYTES == 844
+def test_calldata_868_byte():
+    """[SPEC §K.1] 356 Groth16 + 297 public values + mào đầu ABI.
+
+    868 = 4 selector + 96 đầu (epoch + 2 offset) + (32 + 384) proof
+          + (32 + 320) public values.
+
+    Đệm ABI làm tròn 297 lên 320 y như 296, nên thêm byte window_saturation
+    KHÔNG đổi độ dài calldata, và do đó KHÔNG đổi phí giao dịch cơ bản.
+    """
+    assert C.GROTH16_PROOF_BYTES + C.PUBLIC_VALUES_BYTES == 653
+    head = 4 + 32 * 3
+    body = 32 + 384 + 32 + 320
+    assert head + body == 868
+    assert C.CALLDATA_BYTES == 868
 
 
 # ═══════════════════════════════════════════════════════════════════════════

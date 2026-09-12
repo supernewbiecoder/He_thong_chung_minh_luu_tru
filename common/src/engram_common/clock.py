@@ -123,17 +123,18 @@ _PV = struct.Struct(
     "32s"   # 228..260  prev_state_root
     "32s"   # 260..292  new_state_root    ← guest TỰ TÍNH
     "I"     # 292..296  num_verified      ← guest TỰ ĐẾM
+    "B"     # 296..297  window_saturation ← guest TỰ TÍNH từ kích thước square
 )
 
 
 @dataclass(frozen=True)
 class PublicValues:
-    """Toàn bộ những gì zkVM nói ra cho thế giới bên ngoài. 296 byte, không hơn.
+    """Toàn bộ những gì zkVM nói ra cho thế giới bên ngoài. 297 byte, không hơn.
 
     ── BA LOẠI TRƯỜNG, VÀ VÌ SAO PHẢI PHÂN BIỆT [SPEC §D.2.2] ───────────────
 
     GUEST TỰ TÍNH   batch_root · results_root · storage_vk_digest ·
-                    new_state_root · num_verified
+                    new_state_root · num_verified · window_saturation
                     → KHÔNG AI nói dối được. Chúng là đầu ra của phép tính
                       trong mạch, nên đổi được chúng nghĩa là phá SP1.
 
@@ -162,6 +163,7 @@ class PublicValues:
     prev_state_root: bytes
     new_state_root: bytes
     num_verified: int
+    window_saturation: int = 0
 
     def pack(self) -> bytes:
         raw = _PV.pack(
@@ -177,14 +179,15 @@ class PublicValues:
             self.prev_state_root,
             self.new_state_root,
             self.num_verified,
+            self.window_saturation,
         )
-        assert len(raw) == PUBLIC_VALUES_BYTES, f"public values phải là 296 B, được {len(raw)}"
+        assert len(raw) == PUBLIC_VALUES_BYTES, f"public values phải là {PUBLIC_VALUES_BYTES} B, được {len(raw)}"
         return raw
 
     @classmethod
     def unpack(cls, raw: bytes) -> "PublicValues":
         if len(raw) != PUBLIC_VALUES_BYTES:
-            raise ValueError(f"public values phải là 296 B, nhận {len(raw)}")
+            raise ValueError(f"public values phải là {PUBLIC_VALUES_BYTES} B, nhận {len(raw)}")
         return cls(*_PV.unpack(raw))
 
 
@@ -208,3 +211,34 @@ PV_OFFSETS: dict[str, tuple[int, int]] = {
     "new_state_root": (260, 32),
     "num_verified": (292, 4),
 }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BẤT ĐẲNG THỨC AN TOÀN CỦA CỬA SỔ  ·  [SPEC §F.2 — SỬA P0.6]
+# ═══════════════════════════════════════════════════════════════════════════
+
+CELESTIA_BLOCK_SECONDS = 6.0
+"""Thời gian một block Celestia. Hằng số này là thứ bản trước THIẾU, và vì
+thiếu nó mà Eq. (1) trộn đơn vị: W đếm bằng BLOCK, còn t_prove với t_seal đo
+bằng GIÂY, nên `t_prove <= W` là một bất đẳng thức không có nghĩa."""
+
+
+def window_safety_ok(
+    *, w_blocks: int, t_prove_s: float, t_regen_s: float,
+    t_block_s: float = CELESTIA_BLOCK_SECONDS,
+) -> bool:
+    """Eq. (1) viết đúng đơn vị:
+
+        t_prove <= W · t_block < t_regen + t_prove
+
+    Vế trái: cửa sổ phải đủ dài để một nút TRUNG THỰC kịp nộp.
+    Vế phải: cửa sổ không được dài tới mức một nút đã xoá dữ liệu kịp dựng lại
+    rồi vẫn nộp kịp — nếu thoả thì lưu trữ trở thành tuỳ chọn.
+
+    Cách dùng: `window_safety_ok(w_blocks=200, t_prove_s=..., t_regen_s=...)`.
+    Ghi chú cho đặc tả: với bao đóng fan-in đo được là 23,9 % chứ không phải
+    100 %, `t_regen` nhỏ hơn con số trong §F.2.1, nên bất đẳng thức này phải
+    được kiểm lại ở tham số hiện tại chứ không mặc nhiên đúng.
+    """
+    w_seconds = w_blocks * t_block_s
+    return t_prove_s <= w_seconds < t_regen_s + t_prove_s

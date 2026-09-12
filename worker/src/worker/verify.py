@@ -55,6 +55,25 @@ class ShardResult:
     deadline: int
     shard: int
 
+    snapshot_id: bytes = b""
+    """[SỬA — nhận xét phản biện P0.3] Ảnh chụp sổ mà ô này dựa vào.
+
+    ── VÌ SAO PHẢI CÓ, dù đã có expected_count ────────────────────────────
+
+    `expected_count` chỉ ràng buộc TRONG MỘT Ô: hai ChildProof của cùng một ô
+    phải khai cùng |E_cell|. Nó KHÔNG ràng buộc GIỮA CÁC Ô.
+
+    Không có trường này, ô số 1 dựng từ sổ epoch trước và ô số 2 dựng từ sổ
+    epoch này vẫn cho Σ|E_cell| khớp `expectedDealCount` on-chain. Mắt xích ④
+    thoả mãn trong khi tập nghĩa vụ thật sự được xét là một tập lai.
+
+    Và ngay trong một ô, bằng nhau về SỐ LƯỢNG không có nghĩa là cùng một sổ:
+    hai sổ khác nhau vẫn cho ra cùng |E_cell|.
+
+    Nên aggregator đòi MỌI ChildProof mang cùng một `snapshot_id`, và giá trị
+    đó phải bằng `snapshot_id` trong public values.
+    """
+
     expected_count: int = 0
     """|E_cell| — số hợp đồng mà ô này PHẢI xét, lấy từ sổ thành viên.
 
@@ -126,6 +145,7 @@ def verify_shard(
     *,
     deadline: int,
     shard: int,
+    snapshot_id: bytes,
     namespace: bytes,
     expected: list[ExpectedDeal],
     observed: list[ObservedBlob],
@@ -190,6 +210,7 @@ def verify_shard(
     return ShardResult(
         deadline=deadline,
         shard=shard,
+        snapshot_id=snapshot_id,
         expected_count=len(expected),   # |E_cell| từ sổ, không phải len(verdicts)
         verdicts=verdicts,
         coverage=cov,

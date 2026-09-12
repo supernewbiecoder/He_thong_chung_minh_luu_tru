@@ -63,6 +63,27 @@ def poseidon2_stub(*parts: bytes) -> bytes:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+NODE_TAG = b"\x01"
+"""[SPEC §A.5.2 — SỬA D2] Tiền tố tách miền cho NÚT TRONG.
+
+VÌ SAO CẦN. Không có nó, một nút trong và một lá đều chỉ là 32 byte băm, nên kẻ
+tấn công trình một nút trong RA NHƯ THỂ nó là lá, kèm đường Merkle ngắn hơn, và
+phép kiểm vẫn khớp gốc. Đây là tấn công tiền ảnh thứ hai kinh điển.
+
+Lá được tách miền ở phía khác: `SettlementLeaf.digest()` băm kèm nhãn
+b"ENGRAM_LEAF_V1", nên ảnh trước của lá không bao giờ trùng dạng của nút trong.
+
+CÒN LẠI MỘT ĐIỂM, CỐ Ý GIỮ. Số lá lẻ thì nhân đôi lá cuối, nên về lý thuyết một
+danh sách khác vẫn cho cùng gốc. Điều vô hiệu hoá nó là `num_verified` nằm trong
+public values và được hợp đồng đối chiếu với `expectedDealCount`: danh sách giả
+luôn lệch số lá, nên bị bắt ở mắt xích ④ chứ không phải ở đây.
+"""
+
+
+def _node(a: bytes, b: bytes, hasher=keccak) -> bytes:
+    return hasher(NODE_TAG, a, b)
+
+
 def merkle_root(leaves: Sequence[bytes], hasher=keccak) -> bytes:
     """Gói một danh sách dài thành MỘT giá trị 32 byte.
 
@@ -74,7 +95,7 @@ def merkle_root(leaves: Sequence[bytes], hasher=keccak) -> bytes:
     while len(level) > 1:
         if len(level) % 2:
             level.append(level[-1])
-        level = [hasher(level[i], level[i + 1]) for i in range(0, len(level), 2)]
+        level = [_node(level[i], level[i + 1], hasher) for i in range(0, len(level), 2)]
     return level[0]
 
 
@@ -94,7 +115,7 @@ def merkle_proof(leaves: Sequence[bytes], index: int, hasher=keccak) -> list[byt
             level.append(level[-1])
         sib = idx ^ 1
         path.append(level[sib])
-        level = [hasher(level[i], level[i + 1]) for i in range(0, len(level), 2)]
+        level = [_node(level[i], level[i + 1], hasher) for i in range(0, len(level), 2)]
         idx //= 2
     return path
 
@@ -109,7 +130,7 @@ def merkle_verify(leaf: bytes, path: Iterable[bytes], index: int, root: bytes, h
     node = leaf
     idx = index
     for sib in path:
-        node = hasher(node, sib) if idx % 2 == 0 else hasher(sib, node)
+        node = _node(node, sib, hasher) if idx % 2 == 0 else _node(sib, node, hasher)
         idx //= 2
     return node == root
 

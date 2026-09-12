@@ -41,6 +41,11 @@ class EpochVerdicts:
     """Phán quyết đã hoà giải cho cả epoch."""
 
     verdicts: dict[tuple[bytes, bytes], Verdict] = field(default_factory=dict)
+    snapshot_id: bytes | None = None
+    """Sổ chung của mọi ChildProof. `aggregate_epoch` đối chiếu nó với
+    `snapshot_id` trong public values, nên chuỗi ràng buộc khép kín:
+    ChildProof → evidence → public values → hằng số đóng băng on-chain."""
+
     covered_cells: set[tuple[int, int]] = field(default_factory=set)
     """Tập ô (deadline, mảnh) có ÍT NHẤT MỘT ChildProof.
 
@@ -64,6 +69,15 @@ class EpochVerdicts:
     """
 
     stats: ReconcileStats = field(default_factory=ReconcileStats)
+
+
+class SnapshotMismatch(RuntimeError):
+    """[SỬA P0.3] Hai ChildProof dựng từ hai ảnh chụp sổ khác nhau.
+
+    Bằng nhau về SỐ LƯỢNG không có nghĩa là cùng một sổ: hai sổ khác nhau vẫn
+    cho ra cùng |E_cell|. Nên phải đối chiếu chính snapshot_id, không đối chiếu
+    hệ quả của nó.
+    """
 
 
 class CardinalityMismatch(RuntimeError):
@@ -94,6 +108,20 @@ def reconcile_shard_results(results: list) -> EpochVerdicts:
         cell = (res.deadline, res.shard)
         out.covered_cells.add(cell)
         out.covered_shards.add(res.shard)
+
+        # ── MỌI ChildProof phải dựa trên CÙNG MỘT SỔ  [SỬA P0.3] ────────
+        #
+        # `expected_count` ở dưới chỉ ràng buộc TRONG một ô. Không có phép
+        # kiểm này, ô số 1 dựng từ sổ epoch trước và ô số 2 dựng từ sổ epoch
+        # này vẫn cho Σ|E_cell| khớp con số on-chain — mắt xích ④ thoả mãn
+        # trong khi tập nghĩa vụ được xét là một tập lai.
+        if out.snapshot_id is None:
+            out.snapshot_id = res.snapshot_id
+        elif out.snapshot_id != res.snapshot_id:
+            raise SnapshotMismatch(
+                f"ô {cell} dùng sổ {res.snapshot_id.hex()[:16]} trong khi các ô "
+                f"khác dùng {out.snapshot_id.hex()[:16]}"
+            )
 
         # ── Hai bản của CÙNG một ô phải khai CÙNG |E_cell| ──────────────
         #

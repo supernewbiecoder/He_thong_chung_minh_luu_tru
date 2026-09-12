@@ -12,7 +12,7 @@ from engram_common.constants import GROTH16_PROOF_BYTES
 from engram_common.crypto import keccak, merkle_root
 from engram_common.verdict import Verdict
 
-from .reconcile import EpochVerdicts, reconcile_shard_results
+from .reconcile import EpochVerdicts, reconcile_shard_results, SnapshotMismatch
 
 
 @dataclass(frozen=True)
@@ -26,23 +26,53 @@ class SettlementLeaf:
     ngoài rồi đưa vào, nên không sửa được phán quyết sau khi zkVM đã chạy xong.
     """
 
-    provider_id: bytes
-    deal_id: bytes
+    epoch: int
+    provider_id: bytes      # 20 B — chính là địa chỉ EVM của nút
+    deal_id: bytes          # 32 B
     verdict: Verdict
     challenges_total: int
     challenges_passed: int
     reward_wei: int
     slash_wei: int
 
+    LEAF_TAG = b"ENGRAM_LEAF_V1"
+
     def digest(self) -> bytes:
+        """[SPEC §D.1.6 — SỬA D1] Ảnh trước của lá, PHẢI khớp bit-để-bit với
+        `_leafDigest` trong EngramManager.sol.
+
+        BA THAY ĐỔI SO VỚI BẢN TRƯỚC, và mỗi cái vá một lỗ:
+
+        ① `epoch` nằm trong ảnh trước. Không có nó, hai epoch sinh ra lá giống
+           hệt nhau sẽ cho cùng digest, mà `settlementClaimed` đánh dấu theo
+           digest, nên lá thứ hai vĩnh viễn không rút được.
+
+        ② BIG-endian thay vì little. Không phải chuyện thẩm mỹ: `abi.encodePacked`
+           của Solidity là big-endian, nên little-endian bắt hợp đồng phải đảo
+           byte thủ công, và mỗi chỗ đảo là một chỗ sai được.
+
+        ③ Nhãn miền `ENGRAM_LEAF_V1` ở đầu. Cùng với tiền tố 0x01 của nút trong
+           trong `crypto._node`, nó làm ảnh trước của lá không bao giờ trùng dạng
+           ảnh trước của nút trong, nên không ai trình được một nút trong ra như
+           thể nó là lá.
+
+        Nhưng thay đổi QUAN TRỌNG NHẤT không nằm ở đây mà ở hợp đồng: trước đây
+        hợp đồng nhận `leafDigest` đã băm sẵn và chỉ leo cây Merkle, nên nó không
+        hề ràng buộc digest đó với số tiền và người nhận được truyền vào. Giờ hợp
+        đồng tự băm lại từ các trường, nên digest và số tiền không thể rời nhau.
+        """
+        assert len(self.provider_id) == 20, "provider_id phải là địa chỉ 20 byte"
+        assert len(self.deal_id) == 32, "deal_id phải 32 byte"
         return keccak(
+            self.LEAF_TAG,
+            self.epoch.to_bytes(8, "big"),
             self.provider_id,
             self.deal_id,
             bytes([int(self.verdict)]),
-            self.challenges_total.to_bytes(4, "little"),
-            self.challenges_passed.to_bytes(4, "little"),
-            self.reward_wei.to_bytes(32, "little"),
-            self.slash_wei.to_bytes(32, "little"),
+            self.challenges_total.to_bytes(4, "big"),
+            self.challenges_passed.to_bytes(4, "big"),
+            self.reward_wei.to_bytes(32, "big"),
+            self.slash_wei.to_bytes(32, "big"),
         )
 
 
@@ -68,7 +98,8 @@ def aggregate_epoch(
     epoch: int,
     chain_id: int,
     shard_results: list,
-    expected_cells: set[tuple[int, int]],
+    deadlines_per_epoch: int,
+    n_shards: int,
     prev_state_root: bytes,
     da_commitment: bytes,
     da_nonce: int,
@@ -77,7 +108,7 @@ def aggregate_epoch(
     snapshot_id: bytes,
     require_full_coverage: bool = True,
 ) -> tuple[PublicValues, bytes, list[SettlementLeaf]]:
-    """Gộp cả epoch thành 296 byte public values + bằng chứng Groth16 356 byte."""
+    """Gộp cả epoch thành 297 byte public values + bằng chứng Groth16 356 byte."""
 
     ev: EpochVerdicts = reconcile_shard_results(shard_results)
 
@@ -87,6 +118,22 @@ def aggregate_epoch(
     # phủ bởi worker còn lại — đó chính là điều dư thừa sinh ra để làm. Đòi đủ
     # r bản là làm lẫn lộn AN TOÀN với TÍNH SỐNG, và biến một worker chết thành
     # void cả epoch.
+    # ── TẬP Ô KỲ VỌNG: DẪN XUẤT, KHÔNG NHẬN  [SỬA P0.3] ────────────────────
+    #
+    # Bản trước nhận `expected_cells` làm THAM SỐ từ host. Đó đúng là lỗ hổng
+    # mà §D.3 vá ở tầng worker, chỉ lùi lên một tầng: host đưa vào một tập đã
+    # bớt một ô thì `missing` rỗng, không ai báo lỗi, và các hợp đồng trong ô
+    # đó lặng lẽ không có phán quyết.
+    #
+    # Lưới ô là TẤT ĐỊNH từ ba tham số giao thức, nên dẫn xuất được tại chỗ.
+    # `deadlines_per_epoch` và `n_shards` là hằng số cấu hình mà hợp đồng cũng
+    # biết, nên host nói dối về chúng thì lệch ngay ở mắt xích ④.
+    expected_cells = {
+        (epoch * 1_000_000 + d, s)
+        for d in range(deadlines_per_epoch)
+        for s in range(n_shards)
+    }
+
     if require_full_coverage:
         missing = expected_cells - ev.covered_cells
         if missing:
@@ -106,6 +153,7 @@ def aggregate_epoch(
     for (pid, did), v in sorted(ev.verdicts.items()):
         leaves.append(
             SettlementLeaf(
+                epoch=epoch,
                 provider_id=pid,
                 deal_id=did,
                 verdict=v,
@@ -128,6 +176,18 @@ def aggregate_epoch(
     # Σ|E_cell| thì khác: mỗi |E_cell| dựng từ sổ thành viên đã đối chiếu
     # snapshot_id, và reconcile_shard_results đã kiểm từng ô trả về đúng bản số.
     # Nên tổng này là hệ quả của SỔ, không phải của guest.
+    # ── Khép kín chuỗi sổ  [SỬA P0.3] ──────────────────────────────────────
+    #
+    # reconcile đã buộc mọi ChildProof mang CÙNG một snapshot_id. Ở đây buộc
+    # tiếp giá trị chung đó bằng snapshot_id đi vào public values, tức bằng giá
+    # trị hợp đồng đã đóng băng. Thiếu bước này thì cả epoch có thể nhất quán
+    # nội bộ mà dựa trên một sổ không phải sổ on-chain.
+    if ev.snapshot_id is not None and ev.snapshot_id != snapshot_id:
+        raise SnapshotMismatch(
+            f"ChildProof dùng sổ {ev.snapshot_id.hex()[:16]} nhưng public values "
+            f"khai {snapshot_id.hex()[:16]}"
+        )
+
     num_verified = sum(ev.cell_expected.values())
 
     if num_verified != len(leaves):
@@ -137,6 +197,20 @@ def aggregate_epoch(
             f"Σ|E_cell| = {num_verified} nhưng có {len(leaves)} lá quyết toán"
         )
 
+
+    # ── ĐỘ LẤP ĐẦY CỬA SỔ [SPEC §H.1.7] ────────────────────────────────────
+    #
+    # Lấy giá trị LỚN NHẤT trong các ô, không lấy trung bình. Lý do: chỉ cần
+    # MỘT cửa sổ bị lấp đầy là các nút thuộc deadline đó đã có thể bị chặn
+    # không đăng được bằng chứng. Lấy max là hướng thận trọng — nó chỉ dẫn tới
+    # việc KHÔNG trả hoa hồng, chứ không dẫn tới việc phạt oan ai.
+    #
+    # Không sợ worker khai khống: giá trị này do guest tính từ kích thước
+    # square của block Celestia, tức từ dữ liệu đã cam kết, không phải lời khai.
+    window_saturation = max(
+        (r.coverage.window_saturation for r in shard_results if r.coverage is not None),
+        default=0,
+    )
 
     # [SPEC §J.1.1] Chuỗi trạng thái — mọi trường quan trọng phải nằm trong đó,
     # nếu không chúng có thể đổi mà không ai phát hiện khi kiểm lại từ đầu.
@@ -161,6 +235,7 @@ def aggregate_epoch(
         prev_state_root=prev_state_root,
         new_state_root=new_state_root,
         num_verified=num_verified,   # từ Σ|E_cell|, KHÔNG phải len(leaves)
+        window_saturation=window_saturation,
     )
 
     # [CHỐT D3] Bằng chứng giả có ĐÚNG kích thước thật, nên calldata và gas THẬT.

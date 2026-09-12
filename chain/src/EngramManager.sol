@@ -8,13 +8,13 @@ import {IBlobstream} from "./interfaces/IBlobstream.sol";
   EngramManager — bề mặt on-chain của Engram
 
   [SPEC §C.1]  Tầng L4 trong kiến trúc bốn tầng
-  [SPEC §D.2]  Public values 296 byte
+  [SPEC §D.2]  Public values 297 byte
   [SPEC §I.1]  Kinh tế và quyết toán
 
   ── ĐIỀU DUY NHẤT CẦN NHỚ VỀ HỢP ĐỒNG NÀY ─────────────────────────────────
 
   Nó KHÔNG bao giờ nhìn thấy một bằng chứng lưu trữ nào. Nó chỉ thấy MỘT bằng
-  chứng Groth16 356 byte và 296 byte public values, mỗi epoch một lần, bất kể
+  chứng Groth16 356 byte và 297 byte public values, mỗi epoch một lần, bất kể
   mạng có 10 hay 10.000 hợp đồng.
 
   Đó là toàn bộ đóng góp của Engram. Chi phí đo được: 487.109 gas, biến động
@@ -77,6 +77,21 @@ contract EngramManager {
     /// NGHỊCH LÝ CÓ LỢI: gian lận càng nặng, hoa hồng càng lớn, càng chắc có
     /// người săn. Lá thưởng thì nút tự lo; lá phạt thì không ai muốn nộp.
     uint16 public constant BOUNTY_BPS = 500; // 5 %
+
+    /// [SPEC §H.1.7] Ngưỡng nghẽn DA. `window_saturation` do guest tính từ kích
+    /// thước square của block Celestia, thang [0,255].
+    ///
+    /// VÌ SAO CÓ NGƯỠNG NÀY. Hoa hồng ở trên giả định lá phạt phản ánh gian lận
+    /// thật. Dưới nghẽn DA thì không: nút trung thực không đăng được bằng chứng
+    /// và bị phạt hàng loạt, nên kẻ gây nghẽn tự nộp lá phạt và THU hoa hồng.
+    /// Khoản thu đó tăng theo N, nên bất đẳng thức "chi phí tấn công > giá trị
+    /// thu được" hỏng đúng lúc mạng lớn lên.
+    ///
+    /// Cách vá là cắt phần THU, không phải hạ mức phạt — mức phạt còn phải chặn
+    /// nút xoá dữ liệu, và hoa hồng là TỈ LỆ của nó nên hạ phạt không đổi hình
+    /// dạng bài toán. Epoch vượt ngưỡng: vẫn ghi FAIL, vẫn trừ, nhưng KHÔNG trả
+    /// hoa hồng, nên gây nghẽn trở lại thành phá hoại thuần, không có lợi nhuận.
+    uint8 public constant WINDOW_SATURATION_THRESHOLD = 179; // ~70 %
 
     uint16 public constant PROTOCOL_FEE_BPS = 200; // 2 %  [SPEC §I.1.5]
 
@@ -161,6 +176,9 @@ contract EngramManager {
         bytes32 newStateRoot;
         uint32 numVerified;
         address submitter;
+        /// [SPEC §H.1.7] Chung khe lưu với state+numVerified+submitter
+        /// (1+4+20+1 = 26 byte < 32), nên trường này KHÔNG tốn thêm SSTORE nào.
+        uint8 windowSaturation;
     }
 
     /*═══════════════════════════════════════════════════════════════════════
@@ -518,8 +536,10 @@ contract EngramManager {
     ═══════════════════════════════════════════════════════════════════════*/
 
     function commitEpoch(uint64 epoch, bytes calldata proof, bytes calldata publicValues) external {
-        // ① Độ dài calldata cố định — public values LUÔN là 296 byte.
-        if (publicValues.length != 296) revert BadCalldataLength();
+        // ① Độ dài calldata cố định — public values LUÔN là 297 byte.
+        //    Đệm ABI làm tròn 297 lên 320 hệt như 296, nên byte thứ 297 KHÔNG
+        //    làm tăng độ dài calldata thật và KHÔNG đổi phí giao dịch cơ bản.
+        if (publicValues.length != 297) revert BadCalldataLength();
 
         PublicValues memory pv = _decodePublicValues(publicValues);
 
@@ -567,6 +587,7 @@ contract EngramManager {
             daNonce: pv.daNonce,
             newStateRoot: pv.newStateRoot,
             numVerified: pv.numVerified,
+            windowSaturation: pv.windowSaturation,
             submitter: msg.sender
         });
         currentStateRoot = pv.newStateRoot;
@@ -632,10 +653,32 @@ contract EngramManager {
       O(N) biến thành O(1).
     ═══════════════════════════════════════════════════════════════════════*/
 
+    /// [SPEC §I.1.2 — SỬA D1] Rút tiền theo lá quyết toán.
+    ///
+    /// ── LỖ HỔNG BẢN TRƯỚC, VÀ VÌ SAO NÓ NGHIÊM TRỌNG ───────────────────────
+    ///
+    /// Bản trước nhận `leafDigest` ĐÃ BĂM SẴN cùng `beneficiary`, `rewardWei`,
+    /// `slashWei` làm tham số rời, rồi chỉ kiểm `leafDigest` có nằm trong cây
+    /// Merkle hay không.
+    ///
+    /// Phép kiểm đó chứng minh "digest này có trong cây". Nó KHÔNG chứng minh
+    /// "digest này ứng với số tiền và người nhận vừa truyền vào". Danh sách
+    /// quyết toán công bố trên DA nên ai cũng dựng được một cặp (digest, đường
+    /// Merkle) hợp lệ, rồi điền `beneficiary` là ví mình và `rewardWei` bằng cả
+    /// số dư hợp đồng. Giao dịch đi qua mọi phép kiểm. Rút sạch.
+    ///
+    /// ── CÁCH VÁ ────────────────────────────────────────────────────────────
+    ///
+    /// Nhận CÁC TRƯỜNG của lá, tự băm lại, rồi mới leo cây. Digest và số tiền
+    /// không còn rời nhau được. Bỏ luôn tham số `beneficiary`: tiền đi tới địa
+    /// chỉ `provider` ghi TRONG lá, không tới địa chỉ người gọi tự khai.
     function claimSettlement(
         uint64 epoch,
-        bytes32 leafDigest,
-        address beneficiary,
+        address provider,
+        bytes32 dealId,
+        uint8 verdict,
+        uint32 challengesTotal,
+        uint32 challengesPassed,
         uint256 rewardWei,
         uint256 slashWei,
         bytes32[] calldata merkleProof,
@@ -643,11 +686,16 @@ contract EngramManager {
     ) external {
         EpochRecord storage e = epochs[epoch];
         if (e.state != EpochState.Final) revert EpochNotFinal();
+
+        bytes32 leafDigest = _leafDigest(
+            epoch, provider, dealId, verdict,
+            challengesTotal, challengesPassed, rewardWei, slashWei
+        );
         if (settlementClaimed[leafDigest]) revert AlreadyClaimed();
 
         // [SPEC §I.1.2 ④] Khai tuần tự. Thưởng tích luỹ nên từ khoảng epoch 11,
         // khai có lợi hơn im lặng.
-        if (lastClaimedEpoch[beneficiary] + 1 != epoch && lastClaimedEpoch[beneficiary] != 0) {
+        if (lastClaimedEpoch[provider] + 1 != epoch && lastClaimedEpoch[provider] != 0) {
             revert ClaimOutOfOrder();
         }
 
@@ -656,24 +704,32 @@ contract EngramManager {
         }
 
         settlementClaimed[leafDigest] = true;
-        lastClaimedEpoch[beneficiary] = epoch;
+        lastClaimedEpoch[provider] = epoch;
 
         uint256 bounty = 0;
-        if (slashWei > 0 && msg.sender != beneficiary) {
+        if (
+            slashWei > 0
+            && msg.sender != provider
+            // [SPEC §H.1.7] Không trả hoa hồng cho epoch mà cửa sổ DA bị lấp đầy.
+            // Khi đó lá phạt không phân biệt được "nút gian" với "nút bị chặn
+            // không đăng được", nên treo tiền cho người săn là trả công cho
+            // chính kẻ gây nghẽn. Mức phạt giữ nguyên; chỉ phần THU bị cắt.
+            && e.windowSaturation < WINDOW_SATURATION_THRESHOLD
+        ) {
             // Lá PHẠT: không ai muốn nộp, nên mở cho mọi người kèm hoa hồng.
             bounty = (slashWei * BOUNTY_BPS) / 10_000;
         }
         uint256 net = rewardWei > bounty ? rewardWei - bounty : 0;
 
         if (net > 0) {
-            (bool ok,) = payable(beneficiary).call{value: net}("");
+            (bool ok,) = payable(provider).call{value: net}("");
             require(ok, "chuyen thuong that bai");
         }
         if (bounty > 0) {
             (bool ok2,) = payable(msg.sender).call{value: bounty}("");
             require(ok2, "chuyen hoa hong that bai");
         }
-        emit SettlementClaimed(leafDigest, beneficiary, net, bounty);
+        emit SettlementClaimed(leafDigest, provider, net, bounty);
     }
 
     /*═══════════════════════════════════════════════════════════════════════
@@ -712,9 +768,10 @@ contract EngramManager {
         bytes32 prevStateRoot;
         bytes32 newStateRoot;
         uint32 numVerified;
+        uint8 windowSaturation;
     }
 
-    /// [SPEC §D.2.1] Bố cục 296 byte. Định nghĩa MỘT LẦN và phải khớp bit-để-bit
+    /// [SPEC §D.2.1] Bố cục 297 byte. Định nghĩa MỘT LẦN và phải khớp bit-để-bit
     /// với `engram_common/public_values.py`. Có kiểm thử đối chiếu hai phía.
     function _decodePublicValues(bytes calldata b) internal pure returns (PublicValues memory pv) {
         pv.epoch           = uint64(bytes8(b[0:8]));
@@ -729,20 +786,59 @@ contract EngramManager {
         pv.prevStateRoot   = bytes32(b[228:260]);
         pv.newStateRoot    = bytes32(b[260:292]);
         pv.numVerified     = uint32(bytes4(b[292:296]));
+        pv.windowSaturation = uint8(b[296]);
     }
 
     /// [SPEC §A.5.2] Leo cây Merkle. Hướng rẽ theo bit của chỉ số lá.
+    /// [SỬA D2] Tiền tố tách miền cho NÚT TRONG.
+    ///
+    /// Không có nó, nút trong và lá đều chỉ là 32 byte băm, nên kẻ tấn công
+    /// trình MỘT NÚT TRONG ra như thể nó là lá, kèm đường Merkle ngắn hơn, và
+    /// phép kiểm vẫn khớp gốc. Lá được tách miền ở phía kia bằng nhãn
+    /// ENGRAM_LEAF_V1 trong `_leafDigest`, nên hai dạng ảnh trước không trùng.
+    bytes1 private constant NODE_TAG = 0x01;
+
     function _merkleRoot(bytes32 leaf, bytes32[] calldata proof, uint256 index)
         internal pure returns (bytes32)
     {
         bytes32 node = leaf;
         for (uint256 i = 0; i < proof.length; i++) {
             node = (index & 1) == 0
-                ? keccak256(abi.encodePacked(node, proof[i]))
-                : keccak256(abi.encodePacked(proof[i], node));
+                ? keccak256(abi.encodePacked(NODE_TAG, node, proof[i]))
+                : keccak256(abi.encodePacked(NODE_TAG, proof[i], node));
             index >>= 1;
         }
         return node;
+    }
+
+    /// [SPEC §D.1.6 — SỬA D1] Băm lại lá TỪ CÁC TRƯỜNG, không nhận digest sẵn.
+    ///
+    /// Phải khớp bit-để-bit với `SettlementLeaf.digest()` trong
+    /// `aggregator/aggregate.py`. `abi.encodePacked` là big-endian, và phía
+    /// Python đã đổi sang big-endian cho đúng — trước đây nó là little-endian.
+    function _leafDigest(
+        uint64 epoch,
+        address provider,
+        bytes32 dealId,
+        uint8 verdict,
+        uint32 challengesTotal,
+        uint32 challengesPassed,
+        uint256 rewardWei,
+        uint256 slashWei
+    ) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "ENGRAM_LEAF_V1",
+                epoch,
+                provider,
+                dealId,
+                verdict,
+                challengesTotal,
+                challengesPassed,
+                rewardWei,
+                slashWei
+            )
+        );
     }
 
     receive() external payable {}
