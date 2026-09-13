@@ -1,0 +1,135 @@
+use crate::{poseidon2::hash_2, Fr};
+use rayon::prelude::*;
+
+#[derive(Clone)] // Yêu cầu Clone để hỗ trợ việc sao chép cấu trúc dữ liệu
+pub struct MerkleTree {
+    pub leaves: Vec<Fr>,
+    pub nodes: Vec<Vec<Fr>>,
+    pub root: Fr,
+}
+
+#[derive(Clone, Debug)]
+pub struct MerkleProof {
+    pub leaf_index: usize,
+    pub siblings: Vec<Fr>,
+    pub path_indices: Vec<bool>, // true = nhánh phải, false = nhánh trái
+}
+
+impl MerkleTree {
+    /// Xây dựng cây Merkle từ danh sách bản sao (Replica) và trạng thái (State).
+    /// Thiết kế này giúp phòng ngừa kịch bản tấn công loại 3 bằng cách bắt buộc cam kết (commit) toàn bộ giá trị S_i.
+    pub fn build(sealed_chunks: &[(Fr, Fr)]) -> Self {
+        assert!(!sealed_chunks.is_empty() && sealed_chunks.len().is_power_of_two(), "Số lượng chunk phải là lũy thừa của 2");
+
+        // Tầng lá: Thực hiện băm gộp giá trị R_i và S_i để tạo các nút lá
+        let leaves: Vec<Fr> = sealed_chunks.par_iter()
+            .map(|(r_i, s_i)| hash_2(*r_i, *s_i))
+            .collect();
+
+        let mut nodes = vec![leaves.clone()];
+        let mut current_level = leaves.clone();
+
+        while current_level.len() > 1 {
+            let next_level: Vec<Fr> = current_level.par_chunks(2)
+                .map(|chunk| hash_2(chunk[0], chunk[1]))
+                .collect();
+            nodes.push(next_level.clone());
+            current_level = next_level;
+        }
+
+        Self {
+            leaves,
+            nodes: nodes.clone(),
+            root: nodes.last().unwrap()[0],
+        }
+    }
+
+    /// Khởi tạo bằng chứng (proof) cho một chỉ mục (index) cụ thể, tạo đường dẫn Merkle (Merkle path) từ nút lá lên đến nút gốc.
+    pub fn generate_proof(&self, mut index: usize) -> MerkleProof {
+        let leaf_index = index;
+        let mut siblings = Vec::new();
+        let mut path_indices = Vec::new();
+
+        for level in &self.nodes[..self.nodes.len() - 1] {
+            let is_right = index % 2 == 1;
+            path_indices.push(is_right);
+
+            let sibling_index = if is_right { index - 1 } else { index + 1 };
+            siblings.push(level[sibling_index]);
+
+            index /= 2;
+        }
+
+        MerkleProof { leaf_index, siblings, path_indices }
+    }
+}
+
+/// Trình xác minh (Verifier) độc lập. Đoạn mã này mô phỏng logic sẽ được triển khai trong mạch zk-SNARK (Circuit).
+pub fn verify_merkle_proof(root: Fr, leaf_r: Fr, leaf_s: Fr, proof: &MerkleProof) -> bool {
+    if proof.siblings.len() != proof.path_indices.len() {
+        return false;
+    }
+
+    let expected_path_indices: Vec<bool> = (0..proof.path_indices.len())
+        .map(|level| ((proof.leaf_index >> level) & 1) == 1)
+        .collect();
+    if expected_path_indices != proof.path_indices {
+        return false;
+    }
+
+    // 1. Tính toán lại giá trị băm của nút lá từ R_i và S_i
+    let mut current_hash = hash_2(leaf_r, leaf_s);
+
+    // 2. Thực hiện băm ngược lên trên để tìm ra giá trị của nút gốc
+    for (sibling, is_right) in proof.siblings.iter().zip(proof.path_indices.iter()) {
+        if *is_right {
+            current_hash = hash_2(*sibling, current_hash); // Nút hiện tại đóng vai trò là nút phải
+        } else {
+            current_hash = hash_2(current_hash, *sibling); // Nút hiện tại đóng vai trò là nút trái
+        }
+    }
+
+    current_hash == root
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merkle_proof_verifies_for_matching_leaf_index() {
+        let tree = MerkleTree::build(&[
+            (Fr::from(1u64), Fr::from(10u64)),
+            (Fr::from(2u64), Fr::from(20u64)),
+            (Fr::from(3u64), Fr::from(30u64)),
+            (Fr::from(4u64), Fr::from(40u64)),
+        ]);
+
+        let proof = tree.generate_proof(2);
+        assert!(verify_merkle_proof(
+            tree.root,
+            Fr::from(3u64),
+            Fr::from(30u64),
+            &proof,
+        ));
+    }
+
+    #[test]
+    fn merkle_proof_rejects_tampered_index_binding() {
+        let tree = MerkleTree::build(&[
+            (Fr::from(1u64), Fr::from(10u64)),
+            (Fr::from(2u64), Fr::from(20u64)),
+            (Fr::from(3u64), Fr::from(30u64)),
+            (Fr::from(4u64), Fr::from(40u64)),
+        ]);
+
+        let mut proof = tree.generate_proof(2);
+        proof.leaf_index = 1;
+        assert!(!verify_merkle_proof(
+            tree.root,
+            Fr::from(3u64),
+            Fr::from(30u64),
+            &proof,
+        ));
+    }
+}
