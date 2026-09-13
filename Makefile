@@ -53,6 +53,7 @@ logs:            ## Xem log mọi dịch vụ
 
 test: test-py test-sol  ## Chạy toàn bộ test
 
+RESULTS ?= $(CURDIR)/results
 PYPATH = common/src:provider/src:worker/src:aggregator/src:client/src:orchestrator/src
 
 deps:            ## Cài phụ thuộc để chạy test
@@ -174,8 +175,22 @@ sp1-guest:       ## Build chương trình guest SP1 ra ELF
 sp1-host:        ## Build host đếm chu kỳ (chỉ execute, KHÔNG prove)
 	cd sp1_verify/host && cargo build --release
 
-sp1-sweep:       ## Quét N rồi hồi quy ra f và m
-	cd sp1_verify && ./sweep.sh
+sp1-bundlegen:   ## Build bundle-gen — sweep.sh CẦN cả nó, không chỉ host
+	cd sp1_verify/bundle_gen && cargo build --release
+
+sp1-sweep: sp1-bundlegen  ## Quét N rồi hồi quy ra f và m
+# sweep.sh viết để chạy TRONG Docker: nó tìm binary ở /work và ghi vào /results.
+# Chạy thẳng trên máy thì phải trỏ lại bốn biến. `bash` chứ không `./` vì zip
+# làm mất bit thực thi.
+	@mkdir -p $(RESULTS)/sp1
+	cd sp1_verify && \
+	  BG_DIR=$$PWD/bundle_gen/target/release \
+	  HOST_DIR=$$PWD/host/target/release \
+	  RESULTS_DIR=$(RESULTS)/sp1 \
+	  bash sweep.sh $(PHASE)
+
+sp1-analyze:     ## Hồi quy f và m từ results.jsonl
+	cd sp1_verify && RESULTS_DIR=$(RESULTS)/sp1 python3 analyze.py
 
 sp1-check-nmt:   ## Kiểm module NMT biên dịch được (hiện CHƯA nối vào luồng)
 	cd sp1_verify/guest && cargo check --features nmt
