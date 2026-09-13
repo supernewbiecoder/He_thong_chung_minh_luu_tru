@@ -42,7 +42,12 @@ contract Deploy is Script {
             keccak256("ENGRAM_ACTIVATION_VK_V1"),
             keccak256("ENGRAM_WORKER_PROGRAM_V1"),
             keccak256("ENGRAM_AGGREGATOR_PROGRAM_V1"),
-            bytes32(0) // genesis state root
+            bytes32(0),        // genesis state root
+            // [R7] Tham số lịch nay vào constructor thay vì ghim cứng, để hợp
+            // đồng và guest dùng chung một nguồn. Đổi theo hồ sơ đang chạy:
+            // production là (48, S_ns), sim là (4, S_ns).
+            uint64(vm.envOr("DEADLINES_PER_EPOCH", uint256(48))),
+            uint32(vm.envOr("SHARD_COUNT", uint256(10)))
         );
 
         vm.stopBroadcast();

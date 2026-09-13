@@ -64,6 +64,9 @@ contract EngramManager {
     /// guest không ghim nó thì mắt xích worker → aggregator không có neo, và
     /// hiện điều đó là một GIẢ ĐỊNH về chương trình chứ không phải phép kiểm
     /// của hợp đồng.
+    /// [R5] Neo dự phòng cho `_activationBeacon` trước khi có epoch đầu tiên.
+    bytes32 public immutable genesisAnchor;
+
     bytes32 public immutable WORKER_PROGRAM_VKEY;
     bytes32 public immutable AGGREGATOR_PROGRAM_VKEY;
     /// [R12] Public values KHÔNG có trường version nên hằng số này không đối
@@ -316,7 +319,6 @@ contract EngramManager {
     error NotAggregator();
     error DeadlineNotPassed();
     error NoAggregators();
-    error NoCelestiaAnchor();
     error ProviderSuspended();
     error CapacityBelowUsage();
     error InsufficientEscrow();
@@ -449,6 +451,7 @@ contract EngramManager {
         WORKER_PROGRAM_VKEY = _workerVkey;
         AGGREGATOR_PROGRAM_VKEY = _aggregatorVkey;
         currentStateRoot = _genesisStateRoot;
+        genesisAnchor = keccak256(abi.encodePacked("ENGRAM_GENESIS_ANCHOR", _genesisStateRoot, block.chainid));
         DEADLINES_PER_EPOCH = _deadlinesPerEpoch;
         shardCount = _shardCount;
         // [T2.2-A] PHẢI khởi tạo. Để 0 thì `block.number <= 0 + VOID_GRACE_BLOCKS`
@@ -569,11 +572,29 @@ contract EngramManager {
     ///
     /// Trộn `dealId` để hai hợp đồng trong cùng epoch không dùng chung một vết.
     function _activationBeacon(bytes32 dealId) internal view returns (bytes32) {
-        bytes32 daCommit = epochs[lastCommittedEpoch].daCommitment;
-        // Trước epoch đầu tiên thì chưa có cam kết Celestia nào để neo vào.
-        if (daCommit == bytes32(0)) revert NoCelestiaAnchor();
+        bytes32 anchor = epochs[lastCommittedEpoch].daCommitment;
+
+        // ── KHỞI ĐỘNG: chưa có epoch nào cam kết ────────────────────────────
+        //
+        // Bản trước revert `NoCelestiaAnchor` ở đây. Đó là một lỗi THIẾT KẾ,
+        // không phải một phép kiểm an toàn: hợp đồng lưu trữ ĐẦU TIÊN không mở
+        // được, mà không có hợp đồng thì không có gì để chứng minh, nên không
+        // bao giờ có epoch đầu tiên. Bế tắc vòng tròn. `forge test` bắt đúng
+        // điều này qua `test_phi_niem_phong_mo_khoa_khi_dang_ky_seal`.
+        //
+        // Neo dự phòng là `genesisAnchor`, đặt trong constructor. Nó đoán trước
+        // được, nhưng ở thời điểm khởi động thì không có gì để mài: `dealId`
+        // gắn với `msg.sender` và nonce của khách, nên nút không biết trước
+        // trừ khi khách thông đồng — và khách thông đồng với nút của chính
+        // mình thì không có ai bị hại.
+        //
+        // Từ epoch đầu tiên trở đi, neo là `daCommitment` đã được 2/3 cổ phần
+        // Celestia ký. Nên tính chất yếu hơn CHỈ áp dụng cho những hợp đồng mở
+        // trước epoch đầu tiên.
+        if (anchor == bytes32(0)) anchor = genesisAnchor;
+
         return keccak256(
-            abi.encodePacked("ENGRAM_ACT_BEACON_V1", daCommit, lastCommittedEpoch, dealId)
+            abi.encodePacked("ENGRAM_ACT_BEACON_V1", anchor, lastCommittedEpoch, dealId)
         );
     }
 

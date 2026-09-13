@@ -200,7 +200,8 @@ contract BaselinesTest is Test {
             epoch, keccak256("batch"), keccak256("da"), uint64(812),
             keccak256("results"), keccak256("resultsData"), m.STORAGE_VK_DIGEST(),
             m.snapshotForCurrentEpoch(), bytes20(address(this)), prevRoot,
-            keccak256("newRoot"), m.expectedDealCount()
+            keccak256("newRoot"), m.expectedDealCount(),
+            uint8(0)                       // 296..297 window_saturation
         );
     }
 
@@ -213,8 +214,8 @@ contract BaselinesTest is Test {
         console.log("batch,raw_bytes,onchain_bytes,reduction_x");
         for (uint256 i; i < sizes.length; ++i) {
             uint256 raw = sizes[i] * BUNDLE;
-            console.log(sizes[i], raw, 844);
-            console.log("   giam x:", raw / 844);
+            console.log(sizes[i], raw, 868);
+            console.log("   giam x:", raw / 868);
         }
     }
 

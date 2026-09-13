@@ -45,7 +45,6 @@ contract BountyUnderCongestionTest is Test {
     }
 
     function test_nguong_dung_bien() public {
-        EngramManager m;
         // assertEq(m.WINDOW_SATURATION_THRESHOLD(), 179);
         vm.skip(true);
     }

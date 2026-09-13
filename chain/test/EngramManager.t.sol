@@ -266,7 +266,8 @@ contract EngramManagerTest is Test {
             epoch, keccak256("batch"), keccak256("da"), uint64(812),
             keccak256("results"), keccak256("resultsData"), mgr.STORAGE_VK_DIGEST(),
             mgr.snapshotForCurrentEpoch(), bytes20(address(this)), prevRoot,
-            keccak256("newRoot"), mgr.expectedDealCount()
+            keccak256("newRoot"), mgr.expectedDealCount(),
+            uint8(0)                          // 296..297 window_saturation
         );
     }
 
@@ -353,7 +354,7 @@ contract EngramManagerTest is Test {
             keccak256("results"), keccak256("resultsData"), m.STORAGE_VK_DIGEST(),
             keccak256("SO_BIA_DAT"),          // ← snapshot_id sai
             bytes20(address(this)), bytes32(0), keccak256("newRoot"),
-            m.expectedDealCount()
+            m.expectedDealCount(), uint8(0)
         );
         vm.expectRevert(EngramManager.SnapshotMismatch.selector);
         m.commitEpoch(1, new bytes(356), pv);
@@ -377,7 +378,8 @@ contract EngramManagerTest is Test {
             keccak256("results"), keccak256("resultsData"), m.STORAGE_VK_DIGEST(),
             m.snapshotForCurrentEpoch(), bytes20(address(this)), bytes32(0),
             keccak256("newRoot"),
-            uint32(999)                       // ← bịa, không khớp expectedDealCount
+            uint32(999),                      // ← bịa, không khớp expectedDealCount
+            uint8(0)
         );
         vm.expectRevert(EngramManager.CoverageIncomplete.selector);
         m.commitEpoch(1, new bytes(356), pv);
