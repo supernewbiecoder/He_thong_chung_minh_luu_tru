@@ -1,0 +1,6 @@
+# Phụ thuộc để CHẠY TEST. Mã chạy của hệ không cần gì ngoài thư viện chuẩn.
+#
+# pytest là bắt buộc từ khi `make test-py` chuyển sang tự tìm tệp test. Bản
+# trước liệt kê cứng bảy tệp và chạy từng tệp bằng `python3 <file>`, nên không
+# cần pytest — nhưng cũng vì thế mà mười tệp thêm sau không bao giờ được gọi.
+pytest>=7.0

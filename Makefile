@@ -55,17 +55,25 @@ test: test-py test-sol  ## Chạy toàn bộ test
 
 PYPATH = common/src:provider/src:worker/src:aggregator/src:client/src:orchestrator/src
 
-test-py:         ## Test Python, không cần Docker
-	@for t in common/tests/test_spec_consistency.py \
-	          common/tests/test_blob_impersonation.py \
-	          common/tests/test_membership.py \
-	          provider/tests/test_fanin_closure.py \
-	          worker/tests/test_lottery.py \
-	          aggregator/tests/test_circuit_breaker.py \
-	          aggregator/tests/test_cardinality.py; do \
-	  printf "  %-46s" "$$t"; \
-	  PYTHONPATH=$(PYPATH) python3 $$t >/dev/null 2>&1 && echo "OK" || { echo "LỖI"; exit 1; }; \
-	done
+deps:            ## Cài phụ thuộc để chạy test
+	pip install -r requirements-dev.txt
+
+test-py:         ## Test Python, không cần Docker (cần pytest — xem `make deps`)
+# [SỬA] Bản trước LIỆT KÊ CỨNG bảy tệp, nên mọi tệp test thêm sau đó không bao
+# giờ được gọi — mười tệp của các vòng vá nằm im mà `make test-py` vẫn báo OK.
+# Đó là kiểu hỏng tệ nhất: im lặng và tạo cảm giác an toàn giả.
+#
+# Dùng pytest để nó TỰ TÌM, và để hỏng thì in ra hỏng ở đâu — vòng `for` cũ
+# nuốt đầu ra bằng >/dev/null nên chỉ hiện chữ "LỖI".
+	@PYTHONPATH=$(PYPATH) python3 -m pytest -q \
+	  common/tests worker/tests aggregator/tests provider/tests
+
+test-py-list:    ## Liệt kê các tệp test sẽ chạy
+	@PYTHONPATH=$(PYPATH) python3 -m pytest -q --collect-only \
+	  common/tests worker/tests aggregator/tests provider/tests | tail -3
+	@ls common/tests/test_*.py worker/tests/test_*.py \
+	    aggregator/tests/test_*.py provider/tests/test_*.py | wc -l | \
+	  xargs printf "  %s tệp test\n"
 
 check: test-py   ## Đối chiếu mã với đặc tả rồi chạy thử
 	@echo
