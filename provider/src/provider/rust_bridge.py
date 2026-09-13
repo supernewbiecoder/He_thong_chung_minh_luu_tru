@@ -96,7 +96,7 @@ def prove(
     out_dir: Path,
     n_chunks: int = 16,
     chunk_size: int = 4096,
-    tree_height: int = 4,
+    tree_height: int | None = None,
     challenges: int = 3,
     sector_id: int = 7,
     epoch: int = 0,
@@ -104,7 +104,24 @@ def prove(
     beacon: str = "engram-beacon-000",
     timeout_s: int = 1800,
 ) -> ProofArtifacts:
-    """Niêm phong sector rồi sinh bằng chứng. Mọi số trả về là ĐO, không mô hình."""
+    """Niêm phong sector rồi sinh bằng chứng. Mọi số trả về là ĐO, không mô hình.
+
+    `tree_height` bỏ trống thì DẪN XUẤT từ `n_chunks`: cây Merkle trên n lá cần
+    chiều cao ceil(log2 n).
+
+    ── VÌ SAO KHÔNG ĐỂ MẶC ĐỊNH CỨNG ──────────────────────────────────────
+
+    Bản trước ghim `tree_height = 4`, tức 16 lá. Chạy với 64 chunk thì cây có
+    độ sâu 6, đường Merkle dài 6, nhưng mạch vẫn lặp 4 tầng — ra gốc khác
+    `sealed_root`, và verify TỪ CHỐI.
+
+    Điều tệ nhất không phải việc sai, mà là nó sai IM LẶNG: `engram_prove` vẫn
+    sinh ra một `proof.bin` đúng 13.776 byte trông hoàn toàn bình thường, chỉ
+    tới bước verify mới lộ. Phát hiện được nhờ quét quy mô sector, 16 chunk thì
+    ĐẠT còn 64 và 256 thì FAIL.
+    """
+    if tree_height is None:
+        tree_height = max(1, (n_chunks - 1).bit_length())
     cmd = [
         str(binary("engram_prove")),
         "--sector", str(sector_path),

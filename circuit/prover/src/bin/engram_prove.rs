@@ -95,6 +95,24 @@ fn main() {
     }
     std::fs::create_dir_all(&out_dir).expect("tạo thư mục đầu ra");
 
+    // ── CHIỀU CAO CÂY PHẢI KHỚP SỐ CHUNK ───────────────────────────────────
+    //
+    // Cây Merkle trên n lá cần chiều cao ceil(log2 n). Lệch thì đường Merkle
+    // dài khác số tầng mạch lặp, gốc tính ra khác `sealed_root`, và verify từ
+    // chối.
+    //
+    // Bắt Ở ĐÂY thay vì để lộ ở bước verify, vì sai kiểu đó IM LẶNG: binary vẫn
+    // sinh ra proof.bin đúng 13.776 byte trông bình thường.
+    let need = (usize::BITS - (n_chunks - 1).leading_zeros()) as usize;
+    if tree_height != need {
+        eprintln!(
+            "tree_height = {tree_height} không khớp {n_chunks} chunk — cần {need}. \
+             Cây Merkle trên n lá cần ceil(log2 n) tầng; lệch thì bằng chứng sinh ra \
+             VẪN HỢP LỆ VỀ HÌNH DẠNG nhưng verify sẽ từ chối."
+        );
+        std::process::exit(2);
+    }
+
     let config = EngramConfig {
         sector_size_bytes: n_chunks * chunk_size,
         chunk_size_bytes: chunk_size,
