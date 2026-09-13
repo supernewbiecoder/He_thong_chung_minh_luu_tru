@@ -105,6 +105,19 @@ def main() -> int:
 
     # ── ④ worker đọc TỪ DA rồi verify ──────────────────────────────────────
     blobs = da.read(ns, h, h + 1)
+
+    # Với backend Celestia, signer do ĐỒNG THUẬN điền bằng khoá của node, không
+    # phải giá trị ta truyền vào. Thử truyền giá trị khác thì node từ chối:
+    #   "blob signer … does not match MsgPayForBlobs signer … invalid blob signer"
+    # Đó chính là tính chất §J.2.1 dựa vào. Nên ở đây lấy signer THẬT từ blob
+    # đọc về, đúng như nút sẽ phải đăng ký ở `registerProvider`.
+    if kind == "celestia" and blobs:
+        that = blobs[0].signer
+        print(f"   signer do đồng thuận điền: {that.hex()}")
+        if that != celestia_addr:
+            print(f"   (ta khai {celestia_addr.hex()} — node ghi đè, ĐÚNG như thiết kế)")
+        celestia_addr = that
+
     mine = [b for b in blobs if b.signer == celestia_addr]
     print(f"④ worker đọc được      {len(blobs)} blob, {len(mine)} qua bộ lọc signer")
     got = mine[0].payload

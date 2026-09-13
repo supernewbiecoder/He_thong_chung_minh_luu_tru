@@ -193,7 +193,18 @@ sp1-host:        ## Build host đếm chu kỳ (chỉ execute, KHÔNG prove)
 sp1-bundlegen:   ## Build bundle-gen — sweep.sh CẦN cả nó, không chỉ host
 	cd sp1_verify/bundle_gen && cargo build --release
 
-sp1-sweep: sp1-bundlegen  ## Quét N rồi hồi quy ra f và m
+# sweep.sh NHẬN THAM SỐ CHỌN PHASE. Không truyền thì nó chỉ chạy `smoke` rồi
+# dừng — bản trước của Makefile truyền chuỗi rỗng nên ai chạy `make sp1-sweep`
+# cũng chỉ thấy smoke, tưởng sweep hỏng.
+#
+#   PHASE=smoke     kiểm pipeline, ~5 phút
+#   PHASE=execute   quét cycles — thứ sinh ra f và m
+#   PHASE=distinct  đối chứng: N bundle PHÂN BIỆT vs N bản sao
+#   PHASE=prove     Groth16, ĐẮT, nhiều giờ
+#   PHASE=all       cả bốn
+PHASE ?= execute
+
+sp1-sweep: sp1-bundlegen  ## Quét N rồi hồi quy ra f và m (PHASE=execute|distinct|prove|all)
 # sweep.sh viết để chạy TRONG Docker: nó tìm binary ở /work và ghi vào /results.
 # Chạy thẳng trên máy thì phải trỏ lại bốn biến. `bash` chứ không `./` vì zip
 # làm mất bit thực thi.

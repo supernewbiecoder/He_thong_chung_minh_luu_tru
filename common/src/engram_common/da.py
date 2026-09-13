@@ -237,13 +237,35 @@ class CelestiaDA:
         self._guard_submit()
         if len(namespace) != NAMESPACE_SIZE:
             raise DAError(f"namespace phải {NAMESPACE_SIZE} byte, nhận {len(namespace)}")
+        # ── KHÔNG gửi `signer` lên node ────────────────────────────────────
+        #
+        # ĐÃ THỬ VÀ BỊ TỪ CHỐI, và đó là bằng chứng tốt nhất cho thiết kế:
+        #
+        #   blob signer E41F3584… does not match MsgPayForBlobs signer 5FD07CB6…
+        #   invalid blob signer
+        #
+        # Đồng thuận Celestia ĐỐI CHIẾU trường signer trong share với người ký
+        # giao dịch, và từ chối nếu lệch. Nên không ai điền giả được địa chỉ của
+        # người khác — đúng tính chất mà §J.2.1 dựa vào để chống mạo danh blob.
+        #
+        # Bỏ trường đi để node tự điền bằng khoá của chính nó. Muốn biết địa chỉ
+        # thật thì gọi `account_address()`, hoặc đọc lại blob và xem `signer`.
         blob = {
             "namespace": base64.b64encode(namespace).decode(),
             "data": base64.b64encode(header.pack() + payload).decode(),
             "share_version": 1,
-            "signer": base64.b64encode(signer).decode(),
         }
         return int(self.call("blob.Submit", [[blob], {"gas_price": gas_price}]))
+
+    def account_address(self) -> str:
+        """Địa chỉ bech32 mà node này ký giao dịch bằng.
+
+        Đây là giá trị sẽ xuất hiện trong trường signer của mọi blob node đăng,
+        nên nút PHẢI đăng ký đúng địa chỉ này ở `registerProvider`. Đăng ký sai
+        thì blob của chính nó bị bộ lọc F3b loại, và nó tự biến mình thành
+        ABSENT.
+        """
+        return self.call("state.AccountAddress", [])
 
     def read(self, namespace: bytes, start: int, end: int) -> list[ObservedBlob]:
         """Đọc mọi blob trong namespace, trên khoảng chiều cao nửa mở [start, end).
