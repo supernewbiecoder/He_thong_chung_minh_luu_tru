@@ -102,3 +102,72 @@ fmt:             ## Định dạng mã
 clean:
 	rm -rf chain/out chain/cache results/*.csv
 	find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  TẦNG DA THẬT  ·  devnet Celestia cục bộ
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Backend mặc định là `memory`: chạy trong tiến trình, không cần mạng, dùng cho
+# CI. Nhưng backend đó không kiểm được ba thứ THUỘC VỀ CELESTIA mà thiết kế dựa
+# vào: trường signer có được đồng thuận áp đặt không, namespace có thật sự mở
+# cho mọi người ghi không, và blob có lên được block trong cửa sổ W không.
+#
+# Ba mục tiêu dưới dựng devnet thật để kiểm ba điều đó.
+
+celestia-up:     ## Dựng devnet Celestia cục bộ (validator + bridge)
+	docker compose -f deploy/docker-compose.celestia-devnet.yml up -d
+	@echo "Chờ bridge lên... RPC ở http://127.0.0.1:46658"
+
+celestia-down:   ## Dừng và dọn devnet
+	docker compose -f deploy/docker-compose.celestia-devnet.yml down -v
+
+celestia-status: ## Kiểm devnet đã sẵn sàng chưa
+	@CELESTIA_RPC=http://127.0.0.1:46658 python3 -c "\
+import sys; sys.path.insert(0,'common/src'); \
+from engram_common.da import CelestiaDA; \
+print('chiều cao đầu chuỗi:', CelestiaDA().head_height())"
+
+run-celestia:    ## Chạy mô phỏng với DA THẬT thay vì bộ nhớ
+	ENGRAM_DA=celestia CELESTIA_LOCAL_DEVNET=1 \
+	CELESTIA_RPC=http://127.0.0.1:46658 $(MAKE) run
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  MẠCH THẬT  ·  Nova + Spartan trên BN254
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Cần Rust >= 1.85 (cây phụ thuộc có crate dùng edition2024).
+# Trên Ubuntu 24.04:  apt-get install rustc-1.89 cargo-1.89
+#                     export PATH=/usr/lib/rust-1.89/bin:$PATH
+
+circuit-build:   ## Build mạch Rust (prover + verifier)
+	cd circuit && cargo build --release -p prover --bin engram_prove
+	cd circuit && cargo build --release -p prover --bin engram_verify
+
+e2e-real:        ## Chuỗi THẬT: sector → mạch → DA → verify
+	python3 scripts/e2e_real.py
+
+e2e-real-celestia: ## Như trên nhưng DA là Celestia devnet thật
+	ENGRAM_DA=celestia CELESTIA_LOCAL_DEVNET=1 \
+	CELESTIA_RPC=http://127.0.0.1:46658 python3 scripts/e2e_real.py
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  ĐẾM CHU KỲ SP1  ·  nguồn của f và m
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Cài toolchain: xem RUNBOOK_SERVER.md mục 2. Đường sp1up bị chặn thì đi vòng
+# qua GitHub releases — runbook có lệnh đã kiểm.
+#
+# LƯU Ý: phải dùng `cargo-prove prove build`, KHÔNG dùng `cargo build` trần —
+# thiếu cờ --cfg getrandom_backend="custom" là chết ở crate getrandom.
+
+sp1-guest:       ## Build chương trình guest SP1 ra ELF
+	cd sp1_verify/guest && cargo-prove prove build
+
+sp1-host:        ## Build host đếm chu kỳ (chỉ execute, KHÔNG prove)
+	cd sp1_verify/host && cargo build --release
+
+sp1-sweep:       ## Quét N rồi hồi quy ra f và m
+	cd sp1_verify && ./sweep.sh
+
+sp1-check-nmt:   ## Kiểm module NMT biên dịch được (hiện CHƯA nối vào luồng)
+	cd sp1_verify/guest && cargo check --features nmt

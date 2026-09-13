@@ -1,32 +1,51 @@
 """
-[SPEC §E.1.4] Thuật toán 1d — SeqWide.
+═══════════════════════════════════════════════════════════════════════════════
+ [SPEC §E.1] Niêm phong — Thuật toán 1c, KHỚP VỚI MẠCH
+═══════════════════════════════════════════════════════════════════════════════
 
- ── BA THAY ĐỔI SO VỚI THUẬT TOÁN 1, VÀ CẢ BA PHẢI ĐI CÙNG NHAU ──────────
+ `seal()` hiện thực ĐÚNG thuật toán mà mạch Nova/Spartan trong `circuit/` kiểm:
 
- ① GIEO trạng thái bằng S_{i-1}
-    Chuyển toàn bộ việc băm chunk từ CẠNH chuỗi sang TRÊN chuỗi. Đây là điều
-    kiện để thêm nhân CPU không rút ngắn được gì.
+     D_i = fold limb của chunk           acc₀ = Fr(chunk_size); accₖ₊₁ = H2(accₖ, limbₖ)
+     R_i = H4(D_i, S_{i-1}, i, replica_id)
+     S_i = H2(S_{i-1}, R_i)
 
-    Không có nó: d_i = toFr(chunk_i) chỉ phụ thuộc chunk i, nên 133 trong 137
-    phép băm — 97,8 % — song song hoá được. Nút thật 12 nhân mất 23 phút, kẻ
-    gian song song hoá mất 4,92 phút. KẺ GIAN NHANH HƠN NÚT THẬT 4,7 LẦN.
+ Đối chiếu: `circuit/prover/src/sealing.rs` dòng 102-106, và ràng buộc tương ứng
+ trong `circuit/prover/src/proving.rs` phần 5b.
 
- ② FAN-IN φ = 6
-    Làm ĐIỂM MỐC vô dụng. Không có nó, kẻ gian lưu S mỗi 1.000 chunk — hết
-    268 KB — rồi nối lại chuỗi từ mắt gần nhất trong 0,04 GIÂY. Độ sâu tuần tự
+ ── VÌ SAO ĐỔI VỀ 1c, VÀ MẤT GÌ ─────────────────────────────────────────────
+
+ Bản trước hiện thực SeqWide (Thuật toán 1d) có fan-in φ=6. Nhưng MẠCH thì
+ không, nên repo chứa hai thuật toán mâu thuẫn nhau: số liệu L1 đo từ mạch 1c
+ trong khi mã Python mô tả 1d.
+
+ Chọn cho Python theo mạch, vì mạch là thứ chạy thật và sinh ra số đo. Sealing
+ không phải đóng góp chính của bài — bài tự nói phần này orthogonal.
+
+ MẤT GÌ, phải ghi rõ chứ không giấu:
+
+ ① Điểm mốc lại hoạt động. Không có fan-in, kẻ gian lưu S mỗi 1.000 chunk —
+    hết 268 KB — rồi nối chuỗi từ mắt gần nhất trong 0,04 GIÂY. Độ sâu tuần tự
     dài bao nhiêu cũng vô nghĩa nếu nối được từ giữa.
 
-    Với φ=6, tính lại r_j cần 6 giá trị S, mỗi giá trị lại cần 6 giá trị nữa;
-    chỉ 9 tầng là bao đóng phủ hết 8,4 triệu vị trí. Dựng lại MỘT vị trí =
-    dựng lại CẢ sector.
+ ② Phần hấp thụ chunk TÁCH khỏi chuỗi. `D_i` chỉ phụ thuộc chunk i, nên phần
+    lớn công việc song song hoá được. Đo trong bài: 97,8 % song song hoá được,
+    nút thật 12 nhân mất 23 phút còn kẻ gian song song hoá mất 4,92 phút.
 
- ③ RATE = 4
-    Nút điều chỉnh độ dài. Chọn 4 để sàn kẻ gian vượt 30 phút.
+ Hai điều trên nghĩa là **sàn kẻ gian của 1c thấp hơn hẳn 1d**, và mọi con số
+ `t_regen` suy từ giả định có fan-in KHÔNG áp dụng cho mạch hiện tại.
 
- ── [CHỐT D3] MÔ HÌNH CHI PHÍ ────────────────────────────────────────────
+ ── PHÂN TÍCH SEQWIDE VẪN GIỮ ───────────────────────────────────────────────
 
- Không chạy Poseidon2 thật. Cấu trúc cây, chỉ số, và mọi kích thước là THẬT;
- thời gian được TÍNH bằng costs.seal_seconds() từ số đo 11,89 µs mỗi hoán vị.
+ `seal_seqwide()` và `fanin_positions()` giữ nguyên, và bộ test bao đóng vẫn
+ chạy. Chúng là PHÂN TÍCH một thiết kế thay thế, không phải đường chạy chính.
+ Bài nên trình bày đúng như vậy: SeqWide là hướng thiết kế, mạch hiện thực 1c.
+
+ ── [CHỐT D3] MÔ HÌNH CHI PHÍ ────────────────────────────────────────────────
+
+ Tầng Python không chạy Poseidon2 thật; thời gian TÍNH bằng `costs.seal_seconds()`
+ từ số đo 11,89 µs mỗi hoán vị. Mạch Rust thì dùng Poseidon2 THẬT — xem
+ `circuit/core_primitives/src/poseidon2.rs`.
+═══════════════════════════════════════════════════════════════════════════════
 """
 
 from __future__ import annotations
@@ -71,16 +90,75 @@ class SealResult:
     seconds_modelled: float   # thời gian THẬT sẽ tốn nếu chạy Poseidon2 thật
 
 
+def _fold_limbs(chunk: bytes, chunk_size: int, rate: int = 31) -> bytes:
+    """D_i — gấp limb của chunk. Khớp `core_primitives::chunking::fold_limbs()`:
+
+        acc₀   = Fr(chunk_size_bytes)
+        accₖ₊₁ = H2(accₖ, limbₖ)
+
+    Mạch tái tính đúng vòng lặp này từ 133 limb thô, nên nút giữ mỗi digest 32
+    byte KHÔNG dựng được limb hợp lệ — buộc phải giữ dữ liệu thật.
+    """
+    acc = poseidon2_stub(chunk_size.to_bytes(8, "little"))
+    for off in range(0, len(chunk), rate):
+        acc = poseidon2_stub(acc, chunk[off : off + rate])
+    return acc
+
+
 def seal(chunks: list[bytes], replica_id: bytes, rate: int = SEAL_RATE) -> SealResult:
-    """Thuật toán 1d. Trả về cây niêm phong và thời gian mô hình hoá.
+    """Thuật toán 1c — KHỚP VỚI MẠCH trong `circuit/`.
 
-    KHÔNG có tham số `threads`. Đó không phải thiếu sót — Thuật toán 1d có 0 %
-    công việc song song hoá được. Máy 64 nhân niêm phong MỘT sector không nhanh
-    hơn máy 1 nhân.
+        D_i = fold limb chunk
+        R_i = H4(D_i, S_{i-1}, i, replica_id)
+        S_i = H2(S_{i-1}, R_i)
 
-    Nhiều nhân vẫn hữu ích theo chiều khác: seal NHIỀU SECTOR cùng lúc, mỗi
-    nhân một sector. Đó là cách Filecoin vận hành, và là lý do onboard 100 TB
-    mất 2,7 ngày trên máy 64 nhân thay vì 171 ngày tuần tự.
+    KHÔNG có fan-in, và KHÔNG có tham số `threads`. Nhưng lý do không có
+    `threads` ở đây KHÁC với bản SeqWide: chuỗi S vẫn tuần tự, song phần `D_i`
+    thì tách rời và song song hoá được. Xem docstring đầu mô-đun, mục ②.
+    """
+    n = len(chunks)
+    s_chain: list[bytes] = []
+    r_values: list[bytes] = []
+    leaves: list[bytes] = []
+    s_prev = replica_id
+    chunk_size = len(chunks[0]) if chunks else 0
+
+    for i, chunk in enumerate(chunks):
+        d_i = _fold_limbs(chunk, chunk_size)
+        # H4(a,b,c,d) = H2(H2(a,b), H2(c,d)) — đúng `poseidon2_hash_4` bên Rust
+        r_i = poseidon2_stub(
+            poseidon2_stub(d_i, s_prev),
+            poseidon2_stub(i.to_bytes(8, "little"), replica_id),
+        )
+        s_i = poseidon2_stub(s_prev, r_i)
+        r_values.append(r_i)
+        s_chain.append(s_i)
+        leaves.append(poseidon2_stub(r_i, s_i))
+        s_prev = s_i
+
+    return SealResult(
+        sealed_root=merkle_root(leaves, hasher=poseidon2_stub),
+        s_chain=s_chain,
+        r_values=r_values,
+        seconds_modelled=seal_seconds(n),
+    )
+
+
+def seal_seqwide(chunks: list[bytes], replica_id: bytes,
+                 rate: int = SEAL_RATE) -> SealResult:
+    """Thuật toán 1d — SeqWide, có fan-in φ=6. THIẾT KẾ THAY THẾ, không phải
+    đường chạy chính.
+
+    Giữ lại vì phần phân tích bao đóng fan-in vẫn có giá trị, và vì nếu sau này
+    đưa fan-in vào mạch thì đây là bản tham chiếu. Mạch hiện tại KHÔNG hiện
+    thực hàm này — đừng dùng nó để sinh số liệu cho bài.
+
+    Ba thay đổi so với 1c, và cả ba phải đi cùng nhau:
+
+      ① GIEO trạng thái bằng S_{i-1} — chuyển việc băm chunk từ CẠNH chuỗi sang
+         TRÊN chuỗi, để thêm nhân CPU không rút ngắn được gì.
+      ② FAN-IN φ=6 — làm điểm mốc mất tác dụng.
+      ③ RATE điều chỉnh được — nút chỉnh độ dài chuỗi.
     """
     n = len(chunks)
     s_chain: list[bytes] = []
@@ -89,14 +167,12 @@ def seal(chunks: list[bytes], replica_id: bytes, rate: int = SEAL_RATE) -> SealR
     s_prev = replica_id
 
     for i, chunk in enumerate(chunks):
-        # ① gieo trạng thái bằng mắt trước + fan-in ── TUẦN TỰ
         seed_parts = [s_prev]
         for pos in fanin_positions(i, replica_id):
             seed_parts.append(s_chain[pos])
         seed_parts += [i.to_bytes(8, "little"), replica_id]
         st = poseidon2_stub(*seed_parts)
 
-        # ② hấp thụ limb của chunk ── NẰM TRÊN chuỗi, không tách ra được
         for off in range(0, len(chunk), 31 * rate):
             st = poseidon2_stub(st, chunk[off : off + 31 * rate])
 

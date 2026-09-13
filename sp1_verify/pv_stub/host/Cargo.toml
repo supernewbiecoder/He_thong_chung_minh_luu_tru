@@ -1,0 +1,22 @@
+[package]
+name = "engram-pvstub-host"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "engram-pvstub-host"
+path = "src/main.rs"
+
+# Cùng version SP1 với host thật (6.3.1). Nếu lệch, `programVKey` và định dạng
+# proof sẽ khác và số đo không áp dụng được cho hệ thống thật.
+[dependencies]
+sp1-sdk = { version = "6.3.1", features = ["blocking"] }
+sp1_shared = { path = "../../shared" }
+clap = { version = "4.0", features = ["derive"] }
+hex = "0.4"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+
+[build-dependencies]
+sp1-build = "6.3.1"
+
+[workspace]

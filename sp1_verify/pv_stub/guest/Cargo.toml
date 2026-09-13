@@ -1,0 +1,19 @@
+[package]
+name = "engram-pvstub-guest"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "engram-pvstub-guest"
+path = "src/main.rs"
+
+# CỐ Ý chỉ có 3 dependency. KHÔNG nova-snark: mục đích của guest này là rẻ
+# (vài nghìn cycle) để Groth16 wrap chạy được trên RAM sẵn có. Nó KHÔNG verify
+# storage proof — xem ghi chú ở đầu src/main.rs.
+[dependencies]
+sp1-zkvm = "6.3.1"
+sp1_shared = { path = "../../shared" }
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+
+# Workspace root độc lập, giống guest thật.
+[workspace]

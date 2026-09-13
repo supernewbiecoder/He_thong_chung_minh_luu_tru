@@ -1,0 +1,23 @@
+[package]
+name = "engram-host"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "engram-host"
+path = "src/main.rs"
+
+# CHỈ sp1-sdk + shared. KHÔNG nova/prover (xung đột generic-array).
+# ProofBundle được đọc từ file do bundle_gen sinh.
+[dependencies]
+sp1-sdk = { version = "6.3.1", features = ["blocking"] }
+sp1_shared = { path = "../shared" }
+bincode = "1.3.3"
+clap = { version = "4.0", features = ["derive"] }
+hex = "0.4"
+
+[build-dependencies]
+sp1-build = "6.3.1"
+
+# Tách khỏi workspace simulation — workspace root độc lập.
+[workspace]

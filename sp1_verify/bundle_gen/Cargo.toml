@@ -1,0 +1,20 @@
+[package]
+name = "bundle-gen"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bundle-gen"
+path = "src/main.rs"
+
+# Dùng nova + pipeline Engram. KHÔNG sp1-sdk (xung đột generic-array).
+[dependencies]
+sp1_shared = { path = "../shared" }
+prover = { path = "../../prover" }
+core_primitives = { path = "../../core_primitives" }
+nova-snark = { version = "0.71.1", features = ["test-utils"] }
+bincode = "1.3.3"
+ff = "0.13"
+clap = { version = "4.0", features = ["derive"] }
+
+[workspace]

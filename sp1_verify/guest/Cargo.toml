@@ -1,0 +1,35 @@
+[package]
+name = "engram-guest"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "engram-guest"
+path = "src/main.rs"
+
+[dependencies]
+sp1-zkvm = "6.3.1"
+sp1_shared = { path = "../shared" }
+nova-snark = "0.71.1"
+bincode = "1.3.3"
+ff = "0.13"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+# Chỉ cần khi bật feature `nmt`. Xem chú thích `mod nmt` trong src/main.rs.
+sha2 = { version = "0.10", optional = true }
+
+[features]
+default = []
+# Bật để BIÊN DỊCH nmt.rs (chưa nối vào main): cargo check --features nmt
+nmt = ["dep:sha2"]
+
+# ⚠ KHI NỐI NMT THẬT, thêm patch sha2 của SP1 để dùng precompile SHA-256:
+#   [patch.crates-io]
+#   sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", \
+#            package = "sha2", tag = "<tag khớp SP1 6.3.1>" }
+# Không có patch thì SHA-256 chạy phần mềm thuần, và lập luận "NMT rẻ" ở đầu
+# nmt.rs không còn đúng — chi phí phải đo lại thành một cột riêng của RQ3.
+
+# Guest được build bằng `cargo prove build` với SP1 toolchain (target riscv32im-succinct-zkvm-elf).
+
+# Tách khỏi workspace simulation — đây là workspace root độc lập.
+[workspace]

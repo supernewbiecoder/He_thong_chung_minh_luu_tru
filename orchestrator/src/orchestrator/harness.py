@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+import tempfile
 
 from engram_common.blob import BlobHeader, BlobKind, ObservedBlob, build_namespace
 from engram_common.clock import Clock
@@ -85,17 +87,34 @@ class SimNetwork:
     t_worker_seconds: float = 3.1 * 3600
     dead_workers: set = field(default_factory=set)
 
-    da: InMemoryDA = field(default_factory=InMemoryDA)
+    da_kind: str = "memory"
+    sector_root: str = ""
+    n_chunks: int = 16
+    da: object = None
     deals: list[SimDeal] = field(default_factory=list)
     signer_of: dict[bytes, bytes] = field(default_factory=dict)
     clock: Clock | None = None
     worker_pool: list = field(default_factory=list)
     assigned: dict = field(default_factory=dict)
     lottery_stats: object = None
+    storage: dict = field(default_factory=dict)
     cooldown: int = 0
 
     def build(self) -> "SimNetwork":
         from worker.lottery import LotteryStats, WorkerEntry, cooldown_deadlines, required_workers
+        from engram_common.da import make_da
+        from provider.storage import DealStorage
+        from provider.sealing import derive_replica_id, seal
+
+        # ── TẦNG DA: bộ nhớ hay Celestia thật ──────────────────────────────
+        if self.da is None:
+            self.da = make_da(self.da_kind)
+
+        # ── SECTOR THẬT TRÊN ĐĨA ───────────────────────────────────────────
+        # Không còn sector ảo. Mỗi hợp đồng có byte thật, và "mất dữ liệu" là
+        # đục lỗ thật trên đĩa chứ không phải bật một cờ trong RAM.
+        if not self.sector_root:
+            self.sector_root = tempfile.mkdtemp(prefix="engram-sectors-")
 
         self.clock = Clock(PROFILE_SIM, self.da.height)
         # Tỉ lệ t_worker / deadline giữ nguyên như ở hồ sơ production, để
@@ -114,17 +133,44 @@ class SimNetwork:
             cel = keccak(b"CELESTIA", pidx.to_bytes(2, "little"))[:20]
             self.signer_of[pid] = cel
             did = keccak(b"DEAL", i.to_bytes(4, "little"))
+            # Ghi sector THẬT rồi niêm phong từ file theo luồng — đúng đường mà
+            # một nút thật đi, không phải sinh vết từ hạt giống.
+            store = DealStorage.create(Path(self.sector_root), did, self.n_chunks)
+            replica = derive_replica_id(cel, did, keccak(b"PIECE", did), keccak(b"BEACON", did))
+            res = seal(list(store.iter_chunks()), replica)
+            store.r_values, store.s_chain, store.sealed_root = (
+                res.r_values, res.s_chain, res.sealed_root
+            )
+            self.storage[did] = store
+
             self.deals.append(
                 SimDeal(
                     deal_id=did,
                     provider_id=pid,
                     provider_celestia=cel,
-                    sealed_root=keccak(b"SEALED", did),
+                    sealed_root=res.sealed_root,        # THẬT, từ byte trên đĩa
                     deadline_idx=derive_deadline(did, D),   # [CHỐT E3]
                     shard=derive_shard(did, self.n_shards),
                 )
             )
         return self
+
+    def lose_data(self, deal_index: int, fraction: float = 1.0) -> int:
+        """Nút mất dữ liệu THẬT: đục lỗ trên đĩa, rồi niêm phong lại để thấy
+        vết đổi. Đây là thứ thay cho cờ `lost` của bản trước."""
+        from provider.sealing import derive_replica_id, seal
+
+        d = self.deals[deal_index]
+        st = self.storage[d.deal_id]
+        n = st.lose_fraction(fraction)
+        replica = derive_replica_id(
+            d.provider_celestia, d.deal_id,
+            keccak(b"PIECE", d.deal_id), keccak(b"BEACON", d.deal_id),
+        )
+        res = seal(list(st.iter_chunks()), replica)
+        # Vết mới KHÁC vết đã cam kết on-chain → bằng chứng sẽ không khớp.
+        d.lost = res.sealed_root != d.sealed_root
+        return n
 
     def registry(self, epoch: int) -> MembershipRegistry:
         """[SPEC §D.3] Sổ thành viên — dựng từ cùng nguồn mà hợp đồng dùng.
