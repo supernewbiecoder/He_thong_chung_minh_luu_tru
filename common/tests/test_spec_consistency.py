@@ -132,11 +132,40 @@ def test_kinh_te_dung_lai():
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def test_hoi_quy_chi_phi_zkvm():
-    """cycles = f + m·N, R²=1,0000."""
-    assert C.ZKVM_FIXED_COST_F == 45.385e9
-    assert C.ZKVM_MARGINAL_COST_M == 11.255e9
-    assert CO.shard_cycles(13, 0, coverage=False) == int(45.385e9 + 13 * 11.255e9)
+# Bốn điểm ĐO bằng `make sp1-sweep PHASE=execute` ngày 13/9/2026, sp1-sdk 6.4.0.
+# Chốt cả DỮ LIỆU THÔ chứ không chỉ hệ số: hệ số suy ra được từ dữ liệu, còn dữ
+# liệu thì không suy ngược được từ hệ số. Ai đổi hằng số mà không đổi số đo thì
+# bài kiểm này bắt.
+SP1_DO_DUOC = {1: 56_366_017_083, 2: 67_620_685_802,
+               4: 90_130_021_997, 8: 135_148_694_055}
+
+
+def test_hoi_quy_chi_phi_zkvm_khop_so_DO_DUOC():
+    """cycles = f + m·N, hồi quy bốn điểm, R² = 1,00000000.
+
+    Sai số từng điểm dưới 0,0001 %, nên ngưỡng 0,01 % ở đây vẫn rất rộng.
+    """
+    for n, do in SP1_DO_DUOC.items():
+        mo_hinh = C.ZKVM_FIXED_COST_F + C.ZKVM_MARGINAL_COST_M * n
+        assert abs(mo_hinh - do) / do < 1e-4, f"N={n}: mô hình lệch quá 0,01 %"
+
+
+def test_so_thach_thuc_KHONG_doi_chi_phi_xac_minh():
+    """Đo tại batch=1: ch=1 ra 56.364.682.768, ch=3 ra 56.366.017.083 — chênh
+    0,0024 %.
+
+    Gấp ba số thách thức mà chi phí xác minh gần như không đổi. Công gấp nằm ở
+    THỜI ĐIỂM CHỨNG MINH (L1), không ở thời điểm xác minh (L3). Kỳ vọng ghi
+    trong `sweep.sh` rằng cycles tăng theo challenge là SAI.
+    """
+    ch1, ch3 = 56_364_682_768, 56_366_017_083
+    assert abs(ch3 - ch1) / ch1 < 1e-3
+
+
+def test_shard_cycles_dung_hang_so_hien_tai():
+    assert CO.shard_cycles(13, 0, coverage=False) == int(
+        C.ZKVM_FIXED_COST_F + 13 * C.ZKVM_MARGINAL_COST_M
+    )
 
 
 def test_phu_day_du_co_tran_cung():

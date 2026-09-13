@@ -329,12 +329,44 @@ class BlobKind(int, Enum):
 # đối tượng giả có ĐÚNG KÍCH THƯỚC thật, nên phí DA và calldata là thật. Chỉ nội
 # dung mật mã là giả. Nghĩa là: DA thật, EVM thật, kích thước thật.
 
-ZKVM_FIXED_COST_F = 45.385e9
-"""[ĐO] f — chi phí nạp và tiền xử lý tệp khoá xác minh 4.738.776 byte.
-Nguồn: hồi quy từ điểm đo, R²=1,0000, sai số ngoài mẫu 2,6e-7."""
+ZKVM_FIXED_COST_F = 45.111e9
+"""[ĐO — 13/9/2026, trong repo này] f — nạp và tiền xử lý tệp khoá xác minh
+4.738.776 byte trong guest.
 
-ZKVM_MARGINAL_COST_M = 11.255e9
-"""[ĐO] m — chi phí xác minh MỘT bằng chứng Spartan trong guest."""
+Hồi quy trên BỐN điểm N = 1, 2, 4, 8 đo bằng `make sp1-sweep PHASE=execute`:
+
+    N=1   56.366.017.083        N=4   90.130.021.997
+    N=2   67.620.685.802        N=8  135.148.694.055
+
+    f = 45.111.349.330    m = 11.254.668.108    R² = 1,00000000
+
+Sai số từng điểm dưới 0,0001 %.
+
+SO VỚI SỐ CŨ (45.385e9, hồi quy ba điểm ở một repo khác): thấp hơn 0,60 %. Hợp
+lý, vì f phụ thuộc phiên bản SP1 — lần này chạy sp1-sdk 6.4.0.
+
+⚠ f PHỤ THUỘC HÌNH DẠNG MẠCH. Kích thước `vk` do số ràng buộc R1CS quyết định,
+nên đổi thuật toán niêm phong là phải đo lại. Quét `TREE_HEIGHT` để biết nó dịch
+bao nhiêu."""
+
+ZKVM_MARGINAL_COST_M = 11.2547e9
+"""[ĐO — 13/9/2026, trong repo này] m — xác minh MỘT bằng chứng Spartan trong
+guest. Cùng phép hồi quy với f ở trên.
+
+Số cũ ghi 11.255e9; đo lại ra 11.2547e9, lệch 0,003 %.
+
+⚠ HAI ĐIỀU ĐÁNG BIẾT VỀ m:
+
+① m KHÔNG phụ thuộc số thách thức. Đo tại batch=1:
+       ch=1  56.364.682.768
+       ch=3  56.366.017.083      chênh 0,0024 %
+   Gấp ba số thách thức mà chi phí xác minh gần như không đổi. Đúng nghĩa
+   "succinct verification": công gấp nằm ở THỜI ĐIỂM CHỨNG MINH (L1), không ở
+   thời điểm xác minh (L3). Kỳ vọng ghi trong `sweep.sh` rằng cycles tăng theo
+   challenge là SAI, và phép đo bác bỏ nó.
+
+② m phụ thuộc hình dạng mạch theo bậc log, nhẹ hơn f nhiều. Nhưng vẫn phải đo
+   lại nếu đổi thuật toán niêm phong."""
 
 POSEIDON2_T3_PERM_US = 11.894
 """[ĐO] Một lần hoán vị Poseidon2 t=3 trên container Xeon 2,1 GHz, đo bằng
