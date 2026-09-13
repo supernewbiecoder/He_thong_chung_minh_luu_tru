@@ -476,7 +476,15 @@ contract EngramManager {
         bytes calldata celestiaOwnershipProof
     ) external payable {
         // [CHỐT B2-a] [SPEC §J.2.5] Cọc phải đủ cho số khe khai báo.
-        if (msg.value < uint256(capacitySlots) * MIN_COLLATERAL_PER_SLOT) {
+        // [SỬA] So TỔNG cọc sau khi nạp, không so riêng `msg.value`.
+        //
+        // Bản trước đòi mỗi lần đăng ký lại phải trả LẠI TOÀN BỘ cọc, nên nạp
+        // thêm để gỡ treo là không thể, và đổi `multiaddr` cũng phải trả lại
+        // từ đầu. `forge test` bắt bằng `test_khong_doi_dia_chi_celestia…`:
+        // hàm revert `InsufficientCollateral` trước khi kịp tới phép kiểm địa
+        // chỉ mà bài đó muốn kiểm.
+        if (msg.value + providers[msg.sender].collateralWei
+            < uint256(capacitySlots) * MIN_COLLATERAL_PER_SLOT) {
             revert InsufficientCollateral();
         }
 
@@ -837,7 +845,13 @@ contract EngramManager {
     function requestCollateralWithdraw() external {
         StorageProvider storage p = providers[msg.sender];
         if (p.capacitySlots == 0) revert NotProvider();
-        p.withdrawRequestedAtEpoch = lastCommittedEpoch;
+        // [SỬA] Lưu epoch + 1 làm mốc.
+        //
+        // Bản trước lưu thẳng `lastCommittedEpoch`. Ở epoch 0 thì giá trị lưu
+        // là 0, mà 0 cũng là nghĩa "CHƯA XIN RÚT" — nên xin rút ở epoch đầu
+        // tiên không có tác dụng gì, và `withdrawCollateral` báo `WrongState`
+        // thay vì `AbortTooEarly`. Triệu chứng không hề gợi ra nguyên nhân.
+        p.withdrawRequestedAtEpoch = lastCommittedEpoch + 1;
         emit CollateralWithdrawRequested(msg.sender, lastCommittedEpoch + COLLATERAL_LOCK_EPOCHS);
     }
 
@@ -846,7 +860,7 @@ contract EngramManager {
         StorageProvider storage p = providers[msg.sender];
         if (p.capacitySlots == 0) revert NotProvider();
         if (p.withdrawRequestedAtEpoch == 0) revert WrongState();
-        if (lastCommittedEpoch < p.withdrawRequestedAtEpoch + COLLATERAL_LOCK_EPOCHS) {
+        if (lastCommittedEpoch + 1 < p.withdrawRequestedAtEpoch + COLLATERAL_LOCK_EPOCHS) {
             revert AbortTooEarly();
         }
         // Giữ lại đủ cọc cho mọi khe đang dùng, nếu không thì hợp đồng đang chạy
@@ -904,15 +918,6 @@ contract EngramManager {
     function reportAggregatorTimeout(uint64 epoch) external {
         if (epoch != lastCommittedEpoch + 1) revert EpochOutOfOrder();
 
-        // [T2.3-B] Trong hạn thì chỉ người được chỉ định nộp được. Quá hạn thì
-        // MỞ CHO MỌI NGƯỜI — tính sống quan trọng hơn việc giữ độc quyền, và
-        // người được chỉ định đã bị cắt cọc qua `reportAggregatorTimeout`.
-        address designated = designatedAggregator();
-        if (
-            designated != address(0)
-            && block.number <= commitDeadlineBlock
-            && msg.sender != designated
-        ) revert NotDesignatedAggregator();
         if (block.number <= commitDeadlineBlock) revert DeadlineNotPassed();
         if (aggregatorSet.length == 0) revert NoAggregators();
 
@@ -990,6 +995,22 @@ contract EngramManager {
         //    Đó là cái giá của bất biến chuỗi trạng thái, và nó đáng giữ.
         if (epoch != lastCommittedEpoch + 1) revert EpochOutOfOrder();
         if (pv.prevStateRoot != currentStateRoot) revert StateRootMismatch();
+        // [T2.3-B, VỊ TRÍ ĐÚNG] Cổng này trước đây nằm NHẦM trong
+        // `reportAggregatorTimeout`, vì cả hai hàm cùng mở đầu bằng
+        // `if (epoch != lastCommittedEpoch + 1)`. Hệ quả: `commitEpoch` KHÔNG
+        // hề kiểm người chỉ định — ai cũng nộp được bất cứ lúc nào — còn
+        // `reportAggregatorTimeout` thì chặn nhầm người báo.
+        //
+        // `forge test` bắt được bằng hai bài cùng lúc:
+        //   test_trong_han_chi_nguoi_duoc_chi_dinh_nop_duoc  → không revert
+        //   test_bao_tre_truoc_han_bi_tu_choi                → sai loại lỗi
+        address designated = designatedAggregator();
+        if (
+            designated != address(0)
+            && block.number <= commitDeadlineBlock
+            && msg.sender != designated
+        ) revert NotDesignatedAggregator();
+
         if (pv.epoch != epoch) revert EpochOutOfOrder();
 
         // ④ [SPEC §D.2.2] NEO VÀO HỆ CHỨNG MINH. Đọc comment ở mục 1.

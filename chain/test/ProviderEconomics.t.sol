@@ -141,25 +141,41 @@ contract ProviderEconomicsTest is Test {
 
     /// Rút hết phần cọc tự do qua ĐƯỜNG CÔNG KHAI, không dùng `vm.store` — bài
     /// kiểm phải phản ánh đúng những gì hợp đồng cho phép.
-    function _treo(address who) internal {
-        _open();
-        vm.prank(who);
+    /// Rút hết phần cọc TỰ DO qua đường công khai, không `vm.store`.
+    /// Sau khi rút, cọc còn đúng mức tối thiểu cho số khe đang dùng — tức chưa
+    /// dưới ngưỡng, nên chưa treo. Treo chỉ xảy ra khi bị CẮT cọc, và cắt cọc
+    /// đi qua `claimSettlement` với một lá phạt, mà lá đó cần cây Merkle hợp lệ.
+    /// Nên bài kiểm treo còn skip; ở đây chỉ kiểm đường rút chạy đúng.
+    function test_rut_het_phan_coc_tu_do() public {
+        _register(provider, 4);
+        _open();                                   // usedSlots = 1
+        vm.prank(provider);
         m.requestCollateralWithdraw();
         _epoch_final(1, bytes32(0));
         _epoch_final(2, keccak256("newRoot"));
-        (, uint256 col,,,,,,,,,) = m.providers(who);
-        vm.prank(who);
-        m.withdrawCollateral(col - m.MIN_COLLATERAL_PER_SLOT());
+
+        (, uint256 truoc,,,,,,,,,) = m.providers(provider);
+        uint256 locked = m.MIN_COLLATERAL_PER_SLOT();   // 1 khe đang dùng
+        vm.prank(provider);
+        m.withdrawCollateral(truoc - locked);
+
+        (, uint256 sau,,,,,,,,,) = m.providers(provider);
+        assertEq(sau, locked, "phai giu lai dung muc toi thieu cho khe dang dung");
     }
 
-    function test_nut_bi_treo_khong_nhan_hop_dong_moi() public {
+    /// Không rút quá phần tự do: hợp đồng đang chạy phải còn neo kinh tế.
+    function test_khong_rut_qua_phan_tu_do() public {
         _register(provider, 4);
-        _treo(provider);
-        (,,,,, bool susp,,,,,) = m.providers(provider);
-        if (!susp) return;                     // chưa chạm ngưỡng thì bỏ qua
-        vm.prank(customer);
-        vm.expectRevert(EngramManager.ProviderSuspended.selector);
-        m.openDeal{value: 10e12}(_params());
+        _open();
+        vm.prank(provider);
+        m.requestCollateralWithdraw();
+        _epoch_final(1, bytes32(0));
+        _epoch_final(2, keccak256("newRoot"));
+
+        (, uint256 col,,,,,,,,,) = m.providers(provider);
+        vm.prank(provider);
+        vm.expectRevert(EngramManager.InsufficientCollateral.selector);
+        m.withdrawCollateral(col);                 // rút sạch → phải bị chặn
     }
 
     function test_rut_coc_phai_xin_truoc() public {
@@ -244,6 +260,9 @@ contract ProviderEconomicsTest is Test {
         m.voidEpoch(1);
     }
 
+    /// Bài này từng lộ ra bug: cổng `NotDesignatedAggregator` nằm NHẦM trong
+    /// `reportAggregatorTimeout` thay vì `commitEpoch`, vì hai hàm cùng mở đầu
+    /// bằng `if (epoch != lastCommittedEpoch + 1)`.
     function test_bao_tre_truoc_han_bi_tu_choi() public {
         vm.prank(agg);
         m.registerAggregator{value: 2 ether}();
