@@ -282,11 +282,24 @@ class CelestiaDA:
         #      "share version 1 requires signer of size 20bytes"
         #      Node KHÔNG tự điền; share v1 bắt buộc có.
         #
-        # Nên chỉ còn một đường đúng: hỏi node địa chỉ của chính nó. Đó cũng là
-        # địa chỉ mà nút PHẢI đăng ký ở `registerProvider` — đăng ký sai thì blob
-        # của chính nó bị bộ lọc F3b loại, và nó tự biến mình thành ABSENT.
-        if signer != self.signer_bytes():
-            signer = self.signer_bytes()
+        # Nên chỉ còn một đường đúng: hỏi node địa chỉ của chính nó bằng
+        # `account_address()`, và lớp gọi phải truyền đúng giá trị đó.
+        #
+        # KHÔNG tự ghi đè tham số. Ghi đè thì chạy trót lọt, nhưng nó CHE MẤT
+        # một lỗi cấu hình có thật: nếu nút đăng ký ở `registerProvider` một địa
+        # chỉ khác với khoá của node nó đang chạy, thì blob của chính nó bị bộ
+        # lọc F3b loại và nó TỰ BIẾN MÌNH THÀNH ABSENT — mất doanh thu mà không
+        # hiểu vì sao. Mô phỏng phải tái hiện được lỗi đó, không phải vá nó đi.
+        thuc = self.signer_bytes()
+        if signer != thuc:
+            raise DAError(
+                f"signer truyền vào {signer.hex()} khác khoá của node {thuc.hex()} "
+                f"({self.account_address()}).\n"
+                f"Node sẽ từ chối với 'invalid blob signer'.\n"
+                f"Nút phải đăng ký ĐÚNG địa chỉ của node nó chạy; đăng ký sai thì "
+                f"blob của chính nó bị bộ lọc F3b loại và nó tự thành ABSENT.\n"
+                f"Lấy địa chỉ đúng bằng: CelestiaDA().account_address()"
+            )
 
         blob = {
             "namespace": base64.b64encode(namespace).decode(),

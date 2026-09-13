@@ -75,3 +75,37 @@ def test_chon_backend_theo_bien_moi_truong(monkeypatch):
     monkeypatch.setenv("ENGRAM_DA", "linh tinh")
     with pytest.raises(DAError):
         make_da()
+
+
+# ── signer phải khớp khoá của node, KHÔNG được tự ghi đè ───────────────────
+
+
+def _cel_gia(addr="celestia1t72k39lzv9huw0zvad4kn6uh9tkm5hqq0fqyzz"):
+    d = CelestiaDA(url="http://khong-goi-toi")
+    d._addr = addr                       # nạp sẵn, không chạm mạng
+    return d
+
+
+def test_giai_ma_bech32_ra_20_byte():
+    from engram_common.da import bech32_to_bytes
+    b = bech32_to_bytes("celestia1t72k39lzv9huw0zvad4kn6uh9tkm5hqq0fqyzz")
+    assert len(b) == 20
+    assert b.hex() == "5f956897e2616fc73c4ceb6b69eb972aedba5c00"
+
+
+def test_signer_lech_thi_BAO_LOI_chu_khong_ghi_de(monkeypatch):
+    """Ghi đè im lặng che mất một lỗi cấu hình có thật: nút đăng ký địa chỉ khác
+    khoá của node nó chạy thì blob của chính nó bị F3b loại, và nó tự thành
+    ABSENT. Mô phỏng phải tái hiện được, không phải vá đi."""
+    monkeypatch.setenv("CELESTIA_LOCAL_DEVNET", "1")
+    with pytest.raises(DAError, match="khác khoá của node"):
+        _cel_gia().submit(NS, HDR, b"x", b"\xbb" * 20)
+
+
+def test_thong_bao_loi_chi_duoc_cach_lay_dia_chi_dung(monkeypatch):
+    monkeypatch.setenv("CELESTIA_LOCAL_DEVNET", "1")
+    try:
+        _cel_gia().submit(NS, HDR, b"x", b"\xbb" * 20)
+    except DAError as e:
+        assert "account_address()" in str(e)
+        assert "F3b" in str(e)
