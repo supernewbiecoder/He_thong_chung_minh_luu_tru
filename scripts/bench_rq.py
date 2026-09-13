@@ -70,6 +70,28 @@ def gas_usd(gas: int, gwei: float = GWEI, eth: float = ETH_USD) -> float:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _noi_suy(bang: dict, n: int) -> int:
+    """Nội suy/ngoại suy tuyến tính từ các điểm ĐO của Foundry.
+
+    Bảng đo ở N = 1, 2, 5, 10, 20. Ngoài dải đó thì ngoại suy theo độ dốc của
+    hai điểm cuối — và `rq_provenance.csv` gọi đúng tên nó là NGOẠI SUY.
+    """
+    xs = sorted(bang)
+    if n in bang:
+        return sum(bang[n])
+    if n < xs[0]:
+        return int(sum(bang[xs[0]]) * n / xs[0])
+    if n > xs[-1]:
+        a, b = xs[-2], xs[-1]
+        doc = (sum(bang[b]) - sum(bang[a])) / (b - a)
+        return int(sum(bang[b]) + doc * (n - b))
+    for a, b in zip(xs, xs[1:]):
+        if a <= n <= b:
+            doc = (sum(bang[b]) - sum(bang[a])) / (b - a)
+            return int(sum(bang[a]) + doc * (n - a))
+    raise ValueError(n)
+
+
 def rq2_rows(n_list, sha_cycles: int, throughput: float, prover_usd_h: float):
     """Ba vế cộng lại, theo từng cỡ lô.
 
@@ -79,12 +101,20 @@ def rq2_rows(n_list, sha_cycles: int, throughput: float, prover_usd_h: float):
     rows = []
     for n in n_list:
         # ── vế 1: gas on-chain ─────────────────────────────────────────────
+        #
+        # [SỬA] Dùng SỐ ĐO của Foundry qua `C.BASELINE_GAS`, không tự tính lại.
+        #
+        # Bản trước tính B1 = N·(21.000 + 13.776×16) = 241.416 ở N=1, tức CHỈ
+        # tính intrinsic và bỏ hết execution. Foundry đo được 242.760 + 312.406
+        # = 555.166 — gấp 2,3 lần. Hệ quả: bảng này báo Engram đắt hơn B1 ở N=1
+        # và có điểm giao ở N=2–3, trong khi số ĐO cho thấy Engram rẻ hơn B1
+        # NGAY TỪ N=1 và KHÔNG có điểm giao nào.
+        #
+        # Hai nguồn số cho hai kết luận trái ngược, và nguồn sai là nguồn tự
+        # tính. Giờ nội suy tuyến tính từ điểm đo, không phát minh công thức.
         eng_gas = C.COMMIT_EPOCH_GAS                      # KHÔNG đổi theo N
-        # B1: mỗi nút một lần calldata thô. Chỉ tính intrinsic → thiên vị
-        # baseline, nên so sánh là bảo thủ.
-        b1_gas = n * (21_000 + C.BUNDLE_SIZE_BYTES * 16)
-        # B3: chỉ lưu một hash mỗi bằng chứng.
-        b3_gas = n * (21_000 + 32 * 16 + 20_000)          # +SSTORE
+        b1_gas = _noi_suy(C.BASELINE_GAS["B1"], n)
+        b3_gas = _noi_suy(C.BASELINE_GAS["B3"], n)
 
         # ── vế 2: phí DA ───────────────────────────────────────────────────
         # Cả hai thiết kế đều phải đăng bundle lên DA, nên vế này KHÔNG phải
