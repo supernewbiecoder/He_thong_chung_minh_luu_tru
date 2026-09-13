@@ -51,10 +51,19 @@ contract ProviderEconomicsTest is Test {
     }
 
     function _pv(uint64 epoch, bytes32 prevRoot) internal view returns (bytes memory) {
+        return _pvFrom(epoch, prevRoot, address(this));
+    }
+
+    /// Cho phép đặt `submitter` khác, vì `commitEpoch` kiểm nó TRƯỚC cổng
+    /// aggregator. Dựng pv với submitter sai thì bài kiểm dừng ở
+    /// `SubmitterMismatch` và không bao giờ chạm tới thứ mình muốn kiểm.
+    function _pvFrom(uint64 epoch, bytes32 prevRoot, address submitter)
+        internal view returns (bytes memory)
+    {
         return abi.encodePacked(
             epoch, keccak256("batch"), keccak256("da"), uint64(812),
             keccak256("results"), keccak256("resultsData"), m.STORAGE_VK_DIGEST(),
-            m.snapshotForCurrentEpoch(), bytes20(address(this)), prevRoot,
+            m.snapshotForCurrentEpoch(), bytes20(submitter), prevRoot,
             keccak256("newRoot"), m.expectedDealCount(), uint8(0)
         );
     }
@@ -257,7 +266,9 @@ contract ProviderEconomicsTest is Test {
         // tính TRƯỚC lời gọi, nên chính `_pv` ăn mất prank, và `commitEpoch`
         // chạy với msg.sender = hợp đồng test. Bài kiểm không revert, và triệu
         // chứng "next call did not revert" KHÔNG hề gợi ra nguyên nhân.
-        bytes memory pv = _pv(1, bytes32(0));
+        // Submitter phải là ke_la, nếu không `commitEpoch` dừng ở
+        // `SubmitterMismatch` trước khi tới cổng aggregator.
+        bytes memory pv = _pvFrom(1, bytes32(0), ke_la);
 
         vm.prank(ke_la);
         vm.expectRevert(EngramManager.NotDesignatedAggregator.selector);
