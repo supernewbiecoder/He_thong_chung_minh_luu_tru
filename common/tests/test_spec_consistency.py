@@ -252,3 +252,43 @@ if __name__ == "__main__":
             fn()
             n += 1
     print(f"  {n} phép đối chiếu mã ↔ đặc tả: tất cả đều khớp.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 5. GAS  ·  [ĐO 13/9/2026 bằng forge test]
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_gas_engram_bang_intrinsic_cong_execution():
+    assert C.COMMIT_EPOCH_GAS == 34_888 + 482_042
+
+
+def test_intrinsic_khop_quy_tac_EIP_2028():
+    """21.000 + 868 byte × 16. Con số 844 trong bài cũ KHÔNG khớp:
+    21.000 + 844×16 = 34.504 ≠ 34.888."""
+    assert 21_000 + C.CALLDATA_BYTES * 16 == 34_888
+    assert 21_000 + 844 * 16 != 34_888
+
+
+def test_engram_re_hon_B1_ngay_tu_N_1():
+    """Đổi kết luận của bài: KHÔNG có điểm giao với B1.
+
+    Câu cũ "Engram is more expensive below batch 2" sai, và phương án sửa
+    "crossover giữa 2 và 3" cũng sai. B1 trả calldata thô cho cả 13.776 byte
+    nên riêng intrinsic ở N=1 đã 242.760.
+    """
+    for n in C.BASELINE_GAS["B1"]:
+        assert C.COMMIT_EPOCH_GAS < sum(C.BASELINE_GAS["B1"][n]), f"N={n}"
+
+
+def test_diem_giao_B3_gan_19():
+    b3 = C.BASELINE_GAS["B3"]
+    doc = (sum(b3[20]) - sum(b3[10])) / 10
+    n = 10 + (C.COMMIT_EPOCH_GAS - sum(b3[10])) / doc
+    assert 18.0 < n < 20.0, f"N* = {n:.1f}"
+    assert sum(b3[10]) < C.COMMIT_EPOCH_GAS < sum(b3[20])
+
+
+def test_gas_bat_bien_theo_N():
+    """445.695 → 445.759 khi N tăng 20 lần = 143 phần triệu."""
+    assert (445_759 - 445_695) / 445_695 < 2e-4

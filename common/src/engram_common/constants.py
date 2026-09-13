@@ -417,23 +417,47 @@ CALLDATA_BYTES = 868
 """[ĐO] 356 + 297 + mào đầu ABI. Đệm ABI làm tròn 297 lên 320 y như 296,
 nên thêm byte này KHÔNG đổi độ dài calldata."""
 
-COMMIT_EPOCH_GAS = 487_109
-"""[ĐO — CŨ, PHẢI ĐO LẠI] Biên lai giao dịch thật của một bản hợp đồng TRƯỚC.
+COMMIT_EPOCH_GAS = 516_930
+"""[ĐO — 13/9/2026, `forge test` trong repo này] Tổng gas một lần `commitEpoch`.
 
-KHÔNG ĐỔI qua bốn bậc độ lớn của N — biến động 0,0025 %. Đây là toàn bộ đóng
-góp của Engram gói trong một số.
+    34.888  intrinsic   (21.000 + 868 byte calldata × 16, EIP-2028)
+ + 482.042  execution   (gồm ghép cặp Groth16)
+ ─────────
+   516.930
 
-⚠ HAI LÝ DO PHẢI ĐO LẠI TRƯỚC KHI TRÍCH VÀO BÀI:
+Phân rã thêm: logic hợp đồng không tính Groth16 là 281.160.
 
-① Số trong bài là 474.260 (274.836 logic + 200.940 pairing + 34.888 intrinsic),
-   không phải 487.109. Hai con số này đến từ hai lần đo khác nhau và CHƯA được
-   hoà giải.
+── HAI CON SỐ CŨ, CẢ HAI ĐỀU SAI ──────────────────────────────────────────
 
-② Hợp đồng đã đổi nhiều từ lần đo cuối: bytecode 16.921 → 19.328 byte, và
-   `commitEpoch` thêm cổng aggregator (một SLOAD mảng + vòng quét ngắn).
+487.109 (hằng số này trước đây) và 474.260 (trong bài) đến từ hai lần đo trên
+những bản hợp đồng TRƯỚC bốn vòng vá. Hợp đồng đã đổi nhiều kể từ đó: bytecode
+16.921 → 19.517 byte, `commitEpoch` thêm cổng aggregator.
 
-Đo lại bằng:  cd chain && forge test --match-contract Baselines -vv
-Rồi cập nhật hằng số này TRƯỚC khi chạy scripts/bench_rq.py."""
+── BẤT BIẾN THEO N, ĐÃ ĐO ─────────────────────────────────────────────────
+
+    N=1   445.695        N=5   445.711        N=20  445.759
+
+Chênh 64 gas khi N tăng 20 lần = **143 phần triệu**. Đây là con số trung tâm
+của bài, và nay có phép đo thật đứng sau."""
+
+BASELINE_GAS = {
+    # [ĐO] `forge test --match-contract Baselines`. (intrinsic, execution).
+    "B1": {1: (242_760, 312_406), 2: (462_920, 565_952), 5: (1_124_424, 1_415_044),
+           10: (2_226_248, 2_981_391), 20: (4_430_408, 6_661_646)},
+    "B3": {1: (24_136, 51_135), 2: (25_160, 74_653), 5: (28_232, 145_195),
+           10: (33_352, 262_797), 20: (43_592, 497_917)},
+}
+"""[ĐO] Hai đường cơ sở, để tính điểm giao mà không phải chép tay từ log.
+
+ĐIỂM GIAO, tính lại từ chính bảng này:
+
+  B1: Engram rẻ hơn NGAY TỪ N=1 (516.930 < 555.166). KHÔNG CÓ điểm giao.
+      Câu cũ trong bài "Engram is more expensive below batch 2" SAI, và cả
+      phương án sửa "crossover giữa 2 và 3" cũng sai. B1 phải trả calldata thô
+      cho cả 13.776 byte, nên riêng intrinsic ở N=1 đã là 242.760.
+
+  B3: mỗi hợp đồng thêm 24.536 gas → N* ≈ **19,0**, không phải 17,3 như nội suy
+      trước đây."""
 
 CLAIM_SETTLEMENT_GAS_BASE = 24_735
 CLAIM_SETTLEMENT_GAS_PER_LEVEL = 514
