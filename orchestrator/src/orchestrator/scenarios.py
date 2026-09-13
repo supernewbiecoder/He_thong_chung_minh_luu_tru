@@ -16,7 +16,11 @@ for sub in ("common", "worker", "aggregator", "provider", "client"):
 
 from engram_common.constants import PROFILE_SIM  # noqa: E402
 from engram_common.verdict import Verdict  # noqa: E402
-from aggregator.aggregate import CoverageGapError, aggregate_epoch  # noqa: E402
+from aggregator.aggregate import (  # noqa: E402
+    CoverageGapError,
+    aggregate_epoch_incremental,
+    fold_deadline,
+)
 from worker.lottery import (  # noqa: E402
     LotteryStats, WorkerEntry, cooldown_deadlines, record_outcome,
     required_workers, worker_lottery,
@@ -60,10 +64,10 @@ def run_deadline(net: SimNetwork, epoch: int, d_idx: int, attack_target=None, n_
             record_outcome(w, True, deadline_abs)
             results.append(
                 verify_shard(
-                    deadline=deadline_abs, shard=shard, namespace=net.namespace(shard),
+                    epoch=epoch, deadline_idx=d_idx, shard=shard, namespace=net.namespace(shard),
                     snapshot_id=reg.snapshot_id(),
                     expected=expected, observed=observed, signer_of=net.signer_of,
-                    height_start=slot.window_start, height_end=net.da.height,
+                    clock=net.clock,
                     sha_cycles=net.sha_cycles,
                 )
             )
@@ -72,22 +76,41 @@ def run_deadline(net: SimNetwork, epoch: int, d_idx: int, attack_target=None, n_
 
 def run_epoch(net: SimNetwork, epoch: int, **kw) -> dict[str, Any]:
     """KB-04 — cam kết cả epoch."""
-    all_results = []
-    for d in range(PROFILE_SIM.deadlines_per_epoch):
-        all_results += run_deadline(net, epoch, d, **kw)
-
+    # ── [R11] GẤP DẦN: gộp ngay sau MỖI deadline, không dồn về cuối ────────
+    #
+    # Bản trước gom toàn bộ ChildProof của cả epoch rồi mới gọi `aggregate_epoch`
+    # một lần. Cây đệ quy thì gộp dần được, và gộp dần có ba cái lợi ngoài độ
+    # trễ: tải phần cứng phẳng hơn thay vì dồn vào vài giờ cuối; phát hiện thiếu
+    # ChildProof NGAY sau deadline đó thay vì gần hết ngày; và không phải giữ
+    # toàn bộ ChildProof trong bộ nhớ cùng lúc.
+    #
+    # `test_gap_dan_cho_ket_qua_giong_gop_mot_lan` chốt rằng hai đường cho cùng
+    # kết quả — nếu lệch thì cả hai đều đáng ngờ.
+    sid = net.registry(epoch).snapshot_id()
+    folds = []
+    gap = None
     try:
-        pv, proof, leaves = aggregate_epoch(
-            epoch=epoch, chain_id=net.chain_id, shard_results=all_results,
+        for d in range(PROFILE_SIM.deadlines_per_epoch):
+            res = run_deadline(net, epoch, d, **kw)
+            slot = net.clock.slot_at(epoch, d)
+            folds.append(fold_deadline(
+                deadline=slot.absolute_deadline, snapshot_id=sid,
+                shard_results=res, n_shards=net.n_shards,
+            ))
+
+        all_results = [r for f in folds for r in f.shard_results]
+
+        pv, proof, leaves = aggregate_epoch_incremental(
+            folds=folds,
+            epoch=epoch, chain_id=net.chain_id,
             deadlines_per_epoch=PROFILE_SIM.deadlines_per_epoch,
             n_shards=net.n_shards,
             prev_state_root=bytes(32), da_commitment=b"\xda" * 32, da_nonce=812,
             submitter=b"\x7e" * 20, storage_vk_digest=b"\x05" * 32,
-            snapshot_id=net.registry(epoch).snapshot_id(),
         )
-        gap = None
     except CoverageGapError as e:
         pv, proof, leaves, gap = None, None, [], str(e)
+        all_results = [r for f in folds for r in f.shard_results]
 
     counts = {v.name: 0 for v in Verdict}
     for lf in leaves:

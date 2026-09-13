@@ -93,6 +93,95 @@ class CoverageGapError(RuntimeError):
     """
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  GẤP DẦN THEO TỪNG DEADLINE  ·  [T4.1]
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# VÌ SAO. `aggregate_epoch` nhận TOÀN BỘ ChildProof của cả epoch trong một lần
+# gọi, tức aggregator không làm gì suốt 24 giờ rồi dồn hết vào cuối. Nhưng chính
+# docstring của mô-đun nói nó gộp theo CÂY ĐỆ QUY, mà cây đệ quy thì gộp dần
+# được: gộp hai lá thành một nút ngay khi có đủ hai lá.
+#
+# ĐƯỜNG TỚI HẠN CO LẠI. Thay vì
+#     t_worker(ô cuối) + t_agg(gộp 480 ô)
+# nó thành
+#     t_worker(ô cuối) + t_agg(gộp S_ns ô) + t_agg(gộp D nút)
+# 47 phần gộp kia đã xong từ trước, chạy rải suốt epoch.
+#
+# BA LỢI ÍCH KHÁC. Tải phần cứng phẳng hơn thay vì đòi năng lực khổng lồ trong
+# vài giờ cuối; phát hiện thiếu ChildProof ngay sau deadline đó thay vì gần hết
+# ngày; và không phải giữ 480 ChildProof trong bộ nhớ cùng lúc.
+#
+# CẢNH BÁO. Các phần gộp cách nhau tới 24 giờ, nên nguy cơ lệch sổ CAO HƠN so
+# với gộp một lần. `DeadlineFold` vì thế mang `snapshot_id`, và
+# `aggregate_epoch_incremental` đòi mọi phần gộp cùng một giá trị — đúng cùng
+# ràng buộc đã áp cho ChildProof.
+
+
+@dataclass
+class DeadlineFold:
+    """Kết quả gộp một deadline. Tương đương một nút trong cây đệ quy."""
+
+    deadline: int
+    snapshot_id: bytes
+    shard_results: list
+    """Giữ nguyên ChildProof để tầng trên đối chiếu lại. Trong bản thật đây là
+    một bằng chứng đệ quy, không phải danh sách."""
+
+    @property
+    def n_shards_covered(self) -> int:
+        return len({r.shard for r in self.shard_results})
+
+
+def fold_deadline(*, deadline: int, snapshot_id: bytes, shard_results: list,
+                  n_shards: int) -> DeadlineFold:
+    """Gộp các ô của MỘT deadline, chạy ngay sau khi cửa sổ deadline đó đóng.
+
+    Kiểm tại chỗ hai thứ mà nếu để tới cuối epoch mới kiểm thì đã muộn 20 giờ:
+    đủ mảnh, và mọi ChildProof cùng một sổ.
+    """
+    for r in shard_results:
+        if r.deadline != deadline:
+            raise CoverageGapError(
+                f"ChildProof của deadline {r.deadline} lọt vào phần gộp của {deadline}"
+            )
+        if r.snapshot_id != snapshot_id:
+            raise SnapshotMismatch(
+                f"ô ({r.deadline},{r.shard}) dùng sổ {r.snapshot_id.hex()[:16]} "
+                f"trong khi phần gộp dùng {snapshot_id.hex()[:16]}"
+            )
+
+    covered = {r.shard for r in shard_results}
+    missing = set(range(n_shards)) - covered
+    if missing:
+        raise CoverageGapError(
+            f"deadline {deadline} thiếu mảnh {sorted(missing)} — phát hiện NGAY "
+            f"sau deadline này, không phải tới cuối epoch"
+        )
+    return DeadlineFold(deadline=deadline, snapshot_id=snapshot_id,
+                        shard_results=list(shard_results))
+
+
+def aggregate_epoch_incremental(*, folds: list[DeadlineFold], **kw):
+    """Gộp tầng trên từ các phần gộp theo deadline.
+
+    Kết quả PHẢI trùng với `aggregate_epoch` chạy trên cùng tập ChildProof — có
+    test chốt điều đó, vì nếu hai đường cho hai kết quả thì cả hai đều đáng ngờ.
+    """
+    if not folds:
+        raise CoverageGapError("không có phần gộp nào")
+
+    sid = folds[0].snapshot_id
+    for f in folds:
+        if f.snapshot_id != sid:
+            raise SnapshotMismatch(
+                f"phần gộp deadline {f.deadline} dùng sổ khác các phần còn lại"
+            )
+
+    flat = [r for f in folds for r in f.shard_results]
+    return aggregate_epoch(shard_results=flat, snapshot_id=sid, **kw)
+
+
 def aggregate_epoch(
     *,
     epoch: int,

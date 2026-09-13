@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from engram_common.clock import Clock
 from engram_common.blob import FilterStats, ObservedBlob, filter_blobs
 from engram_common.constants import BUNDLE_SIZE_BYTES
 from engram_common.costs import shard_cycles
@@ -143,15 +144,15 @@ def expected_from_registry(
 
 def verify_shard(
     *,
-    deadline: int,
+    epoch: int,
+    deadline_idx: int,
     shard: int,
     snapshot_id: bytes,
     namespace: bytes,
     expected: list[ExpectedDeal],
     observed: list[ObservedBlob],
     signer_of: dict[bytes, bytes],
-    height_start: int,
-    height_end: int,
+    clock: Clock,
     sha_cycles: int,
 ) -> ShardResult:
     """Thuật toán 4 — VerifyShard.
@@ -164,6 +165,21 @@ def verify_shard(
     # ── BƯỚC 0: PHỦ ĐẦY ĐỦ  [SPEC §G.2] ──────────────────────────────────
     # Làm TRƯỚC mọi thứ khác. Nó cố định tập blob mà guest được phép xét, nên
     # host không thể giấu bớt rồi khai ABSENT.
+    # ── KHOẢNG CHIỀU CAO: DẪN XUẤT, KHÔNG NHẬN  [T1.1] ─────────────────────
+    #
+    # Bản trước nhận `height_start` / `height_end` làm THAM SỐ từ host. Nếu host
+    # chọn được khoảng, nó lấy khoảng của EPOCH TRƯỚC — nơi mọi nút đều đã đăng
+    # bằng chứng hợp lệ — rồi guest đọc blob cũ, xác minh, và ra PASS cho tất cả.
+    # Cả mạng qua kỳ mà KHÔNG AI PHẢI LƯU GÌ.
+    #
+    # Lịch là tất định: cho trước `epoch` và `deadline_idx`, khoảng chiều cao chỉ
+    # có một giá trị. `epoch` đã bị hợp đồng ghim qua `pv.epoch == epoch`, và
+    # chương trình guest bị ghim qua AGGREGATOR_PROGRAM_VKEY, nên khi `H₀` và hồ
+    # sơ tham số được nướng cứng vào chương trình thì host hết chỗ can thiệp.
+    slot = clock.slot_at(epoch, deadline_idx)
+    height_start, height_end = slot.window_start, slot.window_end
+    deadline = slot.absolute_deadline
+
     cov = prove_coverage(namespace, observed, height_start, height_end)
 
     # ── BƯỚC 1: LỌC, gồm LỌC THEO NGƯỜI KÝ  [SPEC §J.2.1] ────────────────

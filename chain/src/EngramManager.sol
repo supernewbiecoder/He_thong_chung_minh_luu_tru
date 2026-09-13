@@ -17,7 +17,7 @@ import {IBlobstream} from "./interfaces/IBlobstream.sol";
   chứng Groth16 356 byte và 297 byte public values, mỗi epoch một lần, bất kể
   mạng có 10 hay 10.000 hợp đồng.
 
-  Đó là toàn bộ đóng góp của Engram. Chi phí đo được: 487.109 gas, biến động
+  Đó là toàn bộ đóng góp của Engram. Chi phí đo được: 474.260 gas, biến động
   0,0025 % qua bốn bậc độ lớn của N. Đường cơ sở "một bản ghi mỗi nút" chết ở
   727 nút.
 
@@ -57,8 +57,19 @@ contract EngramManager {
 
     bytes32 public immutable STORAGE_VK_DIGEST;
     bytes32 public immutable ACTIVATION_VK_DIGEST;
+    /// [T3.5] KHÔNG được đọc ở đâu trong hợp đồng, và điều đó là ĐÚNG: hợp đồng
+    /// chỉ verify bằng chứng của aggregator, còn ChildProof của worker được
+    /// aggregator guest verify đệ quy. Hằng số này tồn tại để **ghim** khoá đó
+    /// ở một nơi bất biến, công khai, để guest lấy làm hằng số biên dịch. Nếu
+    /// guest không ghim nó thì mắt xích worker → aggregator không có neo, và
+    /// hiện điều đó là một GIẢ ĐỊNH về chương trình chứ không phải phép kiểm
+    /// của hợp đồng.
     bytes32 public immutable WORKER_PROGRAM_VKEY;
     bytes32 public immutable AGGREGATOR_PROGRAM_VKEY;
+    /// [R12] Public values KHÔNG có trường version nên hằng số này không đối
+    /// chiếu được với bất cứ thứ gì. Giữ lại để đánh dấu phiên bản bố cục dữ
+    /// liệu ngoài chuỗi (namespace kind, tiêu đề blob), và ghi rõ ở đây rằng nó
+    /// KHÔNG phải một phép kiểm on-chain.
     uint8 public constant PROTOCOL_VERSION = 1;
 
     IEngramVerifier public immutable verifier;
@@ -96,10 +107,38 @@ contract EngramManager {
     uint16 public constant PROTOCOL_FEE_BPS = 200; // 2 %  [SPEC §I.1.5]
 
     /// [SPEC UC-02 A3] Hạn nút phải đăng ký sealed_root sau openDeal.
-    uint8 public constant ABORT_AFTER_DEADLINES = 4;
+    ///
+    /// [T2.4] Đổi đơn vị từ DEADLINE sang EPOCH. Lý do: hợp đồng không nhìn thấy
+    /// chiều cao Celestia nên không biết deadline nào đang mở, và bản trước giải
+    /// quyết điều đó bằng cách HỎI NGƯỜI GỌI. Epoch thì hợp đồng tự biết qua
+    /// `lastCommittedEpoch`, nên không ai tự khai được.
+    uint8 public constant ABORT_AFTER_EPOCHS = 1;
 
     /// [SPEC §K.1] Cọc khoá thêm sau khi xin rút.
     uint8 public constant COLLATERAL_LOCK_EPOCHS = 2;
+
+    /// [T2.2 + T2.3] Hạn chót cam kết một epoch, đếm bằng block EVM.
+    ///
+    /// VÌ SAO CẦN. Bốn mắt xích bảo đảm rằng NẾU có epoch được cam kết thì nội
+    /// dung đúng và đủ. Chúng không nói gì về việc CÓ epoch nào được cam kết hay
+    /// không. Aggregator im lặng thì nút đã tốn ổ cứng cả ngày, worker đã tốn
+    /// hàng trăm giờ CPU, không ai được trả, và KHÔNG AI BỊ PHẠT.
+    ///
+    /// Trong ngôn ngữ authenticated data structures, tính chất còn thiếu là
+    /// FRESHNESS: câu trả lời phải đúng, đủ, VÀ mới.
+    ///
+    /// Dùng block EVM chứ không dùng chiều cao Celestia, vì đây là hạn chót về
+    /// phía EVM và hợp đồng không nhìn thấy Celestia.
+    uint64 public constant COMMIT_PERIOD_BLOCKS = 14_400; // ~48 giờ ở 12 s/block
+
+    /// Ân hạn sau hạn chót trước khi cho phép huỷ epoch.
+    uint64 public constant VOID_GRACE_BLOCKS = 1_200; // ~4 giờ
+
+    /// Phần cọc aggregator bị cắt mỗi lần để lỡ hạn.
+    uint16 public constant AGG_TIMEOUT_SLASH_BPS = 1_000; // 10 %
+
+    /// Cọc tối thiểu để đăng ký làm aggregator.
+    uint256 public constant MIN_AGG_COLLATERAL = 1 ether;
 
     /*═══════════════════════════════════════════════════════════════════════
       3. KIỂU DỮ LIỆU  ·  [SPEC §D.1]
@@ -139,6 +178,11 @@ contract EngramManager {
         uint64 capacitySlots;
         uint64 usedSlots;
         uint64 withdrawRequestedAtEpoch;
+        /// [R2] Treo khi cọc tụt dưới mức cần cho số khe đang dùng.
+        bool suspended;
+        /// [R3] Đổi địa chỉ Celestia phải chờ, xem `requestCelestiaAddressChange`.
+        bytes20 pendingCelestiaAddress;
+        uint64 celestiaChangeEffectiveEpoch;
         uint64 registeredAtEpoch;
         bytes32 providerRoot; // [SPEC §D.1.2] cây khe thưa cố định
         string multiaddr;     // [SPEC §D.1.3] NÊN là DNS, không phải IP thô
@@ -160,7 +204,7 @@ contract EngramManager {
         bool sealingFeeReleased;
         uint64 startEpoch;
         uint64 endEpoch;
-        uint64 openedAtDeadline;
+        uint64 openedAtEpoch;
         DealState state;
     }
 
@@ -217,6 +261,65 @@ contract EngramManager {
 
     bytes32 public currentStateRoot;
     uint64 public lastCommittedEpoch;
+
+    // ── AGGREGATOR: đăng ký, chỉ định, phạt  [T2.3 phương án B] ──────────
+    struct AggregatorInfo {
+        uint256 collateralWei;
+        bool registered;
+        uint64 timeouts;
+        /// [R6] Epoch lúc xin rút. 0 nghĩa là chưa xin.
+        uint64 withdrawRequestedAtEpoch;
+    }
+
+    /// [T1.3] Nonce mỗi khách, để `dealId` không mài được.
+    mapping(address => uint256) public dealNonce;
+
+    /// [T1.3] Số deadline mỗi epoch và số mảnh. Hợp đồng cần chúng để dẫn xuất
+    /// vị trí hợp đồng, và guest cũng dùng cùng bộ giá trị này.
+    /// [R7] Đặt trong constructor, KHÔNG ghim cứng.
+    ///
+    /// Bản trước ghim `DEADLINES_PER_EPOCH = 48` và `shardCount = 10`, tức ghim
+    /// hồ sơ production. Chạy với `PROFILE_SIM` (D = 4) thì `deadlineIdx` mà hợp
+    /// đồng dẫn xuất nằm trong [0,48) còn guest chỉ xét [0,4), nên phần lớn hợp
+    /// đồng rơi vào deadline không ô nào phủ. Chưa lộ ra vì luồng Python không
+    /// gọi `openDeal` của Solidity, nhưng nối thật là vỡ ngay.
+    ///
+    /// `shardCount` bản trước còn là biến `public` KHÔNG CÓ SETTER: vừa tốn
+    /// SLOAD vừa làm người đọc tưởng đổi được.
+    uint64 public immutable DEADLINES_PER_EPOCH;
+    uint32 public immutable shardCount;
+
+    mapping(address => AggregatorInfo) public aggregators;
+    address[] public aggregatorSet;
+
+    /// Chỉ số quay vòng trong `aggregatorSet`. Ai đang được chỉ định cho epoch
+    /// kế tiếp thì đọc bằng `designatedAggregator()`.
+    uint256 public aggRotation;
+
+    /// Block EVM mà epoch kế tiếp phải được cam kết trước.
+    uint64 public commitDeadlineBlock;
+
+    event CollateralSlashed(
+        address indexed provider, uint64 indexed epoch, uint256 slashed, uint256 owed
+    );
+    event CollateralWithdrawRequested(address indexed provider, uint64 unlockEpoch);
+    event CollateralWithdrawn(address indexed provider, uint256 amount);
+    event DealClosed(bytes32 indexed dealId, uint64 endEpoch);
+    event ProviderSuspendedEvent(address indexed provider, uint256 collateralWei, uint64 usedSlots);
+    event CelestiaAddressChangeRequested(address indexed provider, bytes20 newAddr, uint64 effectiveEpoch);
+
+    event AggregatorRegistered(address indexed agg, uint256 collateralWei);
+    event AggregatorTimedOut(address indexed agg, uint64 epoch, uint256 slashed, address reporter);
+    event CommitDeadlineSet(uint64 indexed epoch, uint64 deadlineBlock);
+
+    error NotDesignatedAggregator();
+    error NotAggregator();
+    error DeadlineNotPassed();
+    error NoAggregators();
+    error NoCelestiaAnchor();
+    error ProviderSuspended();
+    error CapacityBelowUsage();
+    error InsufficientEscrow();
 
     /*───────────────────────────────────────────────────────────────────────
       SỔ THÀNH VIÊN  ·  [SPEC §D.3]
@@ -304,7 +407,6 @@ contract EngramManager {
       6. LỖI  — dùng custom error cho rẻ gas
     ═══════════════════════════════════════════════════════════════════════*/
 
-    error BadProtocolVersion();
     error BadCalldataLength();
     error SubmitterMismatch();     // [SPEC §D.2.4] chống front-run
     error StateRootMismatch();     // chuỗi trạng thái phải nối liền
@@ -335,8 +437,11 @@ contract EngramManager {
         bytes32 _activationVkDigest,
         bytes32 _workerVkey,
         bytes32 _aggregatorVkey,
-        bytes32 _genesisStateRoot
+        bytes32 _genesisStateRoot,
+        uint64 _deadlinesPerEpoch,
+        uint32 _shardCount
     ) {
+        require(_deadlinesPerEpoch > 0 && _shardCount > 0, "tham so lich phai duong");
         verifier = _verifier;
         blobstream = _blobstream;
         STORAGE_VK_DIGEST = _storageVkDigest;
@@ -344,6 +449,12 @@ contract EngramManager {
         WORKER_PROGRAM_VKEY = _workerVkey;
         AGGREGATOR_PROGRAM_VKEY = _aggregatorVkey;
         currentStateRoot = _genesisStateRoot;
+        DEADLINES_PER_EPOCH = _deadlinesPerEpoch;
+        shardCount = _shardCount;
+        // [T2.2-A] PHẢI khởi tạo. Để 0 thì `block.number <= 0 + VOID_GRACE_BLOCKS`
+        // sai ngay trên chuỗi thật, và `voidEpoch` mở toang từ giây đầu tiên —
+        // đúng lỗ hổng mà bản vá này sinh ra để đóng.
+        commitDeadlineBlock = uint64(block.number) + COMMIT_PERIOD_BLOCKS;
     }
 
     /*═══════════════════════════════════════════════════════════════════════
@@ -373,9 +484,36 @@ contract EngramManager {
         require(celestiaOwnershipProof.length > 0, "thieu chung minh khoa Celestia");
 
         StorageProvider storage p = providers[msg.sender];
-        p.celestiaAddress = celestiaAddress;
+
+        // ── [R3] ĐĂNG KÝ LẠI KHÔNG ĐƯỢC PHÉP GHI ĐÈ TUỲ Ý ──────────────────
+        //
+        // Bản trước không phân biệt lần đầu với lần sau. Hai hệ quả:
+        //
+        // ① Không kiểm `capacitySlots >= usedSlots`, nên nút đăng ký lại với
+        //    capacity = 0 trong khi đang giữ 5 hợp đồng, và không ai bắt.
+        //
+        // ② Đổi `celestiaAddress` GIỮA CHỪNG làm hỏng chính bộ lọc signer. Nút
+        //    sắp bị FAIL đổi địa chỉ để blob của chính nó bị loại, biến FAIL
+        //    thành ABSENT, tức NÉ MỨC PHẠT GẤP MƯỜI.
+        //
+        // Giờ: capacity không tụt dưới số khe đang dùng; và địa chỉ Celestia chỉ
+        // đặt được ở lần đăng ký ĐẦU, sau đó phải đi qua
+        // `requestCelestiaAddressChange` và chỉ hiệu lực từ epoch sau.
+        if (capacitySlots < p.usedSlots) revert CapacityBelowUsage();
+
+        if (p.celestiaAddress == bytes20(0)) {
+            p.celestiaAddress = celestiaAddress;
+        } else if (celestiaAddress != p.celestiaAddress) {
+            revert WrongState();
+        }
+
         p.collateralWei += msg.value;
         p.capacitySlots = capacitySlots;
+
+        // Nạp thêm cọc đủ mức thì gỡ treo.
+        if (p.suspended && p.collateralWei >= uint256(p.usedSlots) * MIN_COLLATERAL_PER_SLOT) {
+            p.suspended = false;
+        }
         p.multiaddr = multiaddr;
         p.registeredAtEpoch = lastCommittedEpoch + 1; // hiệu lực từ biên epoch sau
 
@@ -411,24 +549,71 @@ contract EngramManager {
     ///      chỗ gọi vì không còn nhầm thứ tự 10 đối số cùng kiểu số.
     ///
     /// Chọn ②.
+    /// [R5] Beacon kích hoạt, LẤY TỪ CELESTIA chứ không từ `blockhash`.
+    ///
+    /// VÌ SAO ĐỔI. Bản trước dùng `blockhash(block.number - 1)`. Người đề xuất
+    /// block EVM chọn được đưa giao dịch `openDeal` vào block nào, nên chọn được
+    /// một trong vài giá trị beacon gần nhau. Và nó lệch nguồn với phần còn lại
+    /// của hệ: thách thức deadline lấy từ data root Celestia, chỉ riêng beacon
+    /// kích hoạt lấy từ EVM.
+    ///
+    /// NGUỒN MỚI. `daCommitment` của epoch đã cam kết gần nhất — một giá trị đã
+    /// được 2/3 cổ phần Celestia ký và Blobstream chuyển sang EVM. Người đề xuất
+    /// block EVM không tác động được vào nó.
+    ///
+    /// ĐÁNH ĐỔI, PHẢI NÓI RÕ. Giá trị này CỐ ĐỊNH trong suốt một epoch, nên nó
+    /// đoán trước được kể từ lúc epoch trước cam kết. Tính chất nó mua được là
+    /// "không dựng vết niêm phong trước khi epoch trước được cam kết", KHÔNG
+    /// phải "không đoán trước được trong vài giây". Về độ tươi thì yếu hơn
+    /// `blockhash`; về nguồn gốc và khả năng mài thì mạnh hơn.
+    ///
+    /// Trộn `dealId` để hai hợp đồng trong cùng epoch không dùng chung một vết.
+    function _activationBeacon(bytes32 dealId) internal view returns (bytes32) {
+        bytes32 daCommit = epochs[lastCommittedEpoch].daCommitment;
+        // Trước epoch đầu tiên thì chưa có cam kết Celestia nào để neo vào.
+        if (daCommit == bytes32(0)) revert NoCelestiaAnchor();
+        return keccak256(
+            abi.encodePacked("ENGRAM_ACT_BEACON_V1", daCommit, lastCommittedEpoch, dealId)
+        );
+    }
+
+    /// [T1.3] Bốn trường `dealId`, `deadlineIdx`, `shard`, `activationBeacon`
+    /// ĐÃ BỎ khỏi tham số: chúng được hợp đồng dẫn xuất, không nhận từ khách.
     struct DealParams {
-        bytes32 dealId;
         address provider;
         bytes32 pieceRoot;
         uint64 pieceSizeReal;
         uint256 pricePerEpochWei;
         uint64 durationEpochs;
-        uint8 deadlineIdx;
-        uint32 shard;
-        bytes32 activationBeacon;
         uint256 sealingFeeWei;
     }
 
-    function openDeal(DealParams calldata q) external payable {
-        if (_deals[q.dealId].state != DealState.None) revert DealExists();
+    /// [T1.3] Mở hợp đồng lưu trữ.
+    ///
+    /// BẢN TRƯỚC nhận `dealId`, `deadlineIdx`, `shard`, `activationBeacon` làm
+    /// THAM SỐ và không kiểm gì. Đặc tả thì nói hợp đồng tự dẫn xuất
+    /// `deadlineIdx = H(dealId) mod D` và `shard = H(dealId) mod S_ns`.
+    ///
+    /// Hệ quả nặng nhất: khách MÀI `dealId` cho tới khi hợp đồng rơi vào đúng
+    /// mảnh mà kẻ tấn công đã chiếm khe worker. Hai hệ quả nhẹ hơn là lệch tải
+    /// và tự chọn beacon.
+    ///
+    /// Giờ cả bốn trường được dẫn xuất trong hợp đồng. `dealId` gắn với
+    /// `msg.sender` và một nonce tăng dần, nên không mài được: đổi bất kỳ đầu
+    /// vào nào thì `dealId` đổi theo một cách khách không điều khiển nổi.
+    function openDeal(DealParams calldata q) external payable returns (bytes32 dealId) {
+        dealId = keccak256(
+            abi.encodePacked(msg.sender, q.provider, q.pieceRoot, dealNonce[msg.sender]++)
+        );
+        if (_deals[dealId].state != DealState.None) revert DealExists();
+
+        uint8 deadlineIdx = uint8(uint256(keccak256(abi.encodePacked("DL", dealId))) % DEADLINES_PER_EPOCH);
+        uint32 shard = uint32(uint256(keccak256(abi.encodePacked("SH", dealId))) % shardCount);
+        bytes32 activationBeacon = _activationBeacon(dealId);
 
         StorageProvider storage p = providers[q.provider];
         if (p.capacitySlots == 0) revert NotProvider();
+        if (p.suspended) revert ProviderSuspended();          // [R2]
         if (p.usedSlots >= p.capacitySlots) revert NoFreeSlots();
 
         // [CHỐT B2-a] Kiểm lại tại thời điểm nhận hợp đồng, không chỉ lúc đăng ký:
@@ -443,25 +628,28 @@ contract EngramManager {
         // Ghi qua con trỏ storage, từng trường một. Dựng cả struct trong bộ nhớ
         // rồi gán một lần cũng đúng, nhưng nó giữ 17 giá trị sống cùng lúc và
         // đó chính là thứ đẩy stack quá giới hạn.
-        StorageDeal storage d = _deals[q.dealId];
+        StorageDeal storage d = _deals[dealId];
         d.customer = msg.sender;
         d.provider = q.provider;
         d.pieceRoot = q.pieceRoot;
-        d.activationBeacon = q.activationBeacon;
+        d.activationBeacon = activationBeacon;
         d.pieceSizeReal = q.pieceSizeReal;
         d.slotIdx = uint32(p.usedSlots);
-        d.deadlineIdx = q.deadlineIdx;
-        d.shard = q.shard;
+        d.deadlineIdx = deadlineIdx;
+        d.shard = shard;
         d.pricePerEpochWei = q.pricePerEpochWei;
         d.escrowWei = escrow;
         d.sealingFeeWei = q.sealingFeeWei;
         d.startEpoch = lastCommittedEpoch + 1;
         d.endEpoch = lastCommittedEpoch + 1 + q.durationEpochs;
+        // [T2.4] Ghi mốc mở. Bản trước KHÔNG BAO GIỜ gán trường này nên nó luôn
+        // bằng 0, và điều kiện huỷ trong `abortDeal` luôn thoả.
+        d.openedAtEpoch = lastCommittedEpoch + 1;
         d.state = DealState.Pending;
 
         p.usedSlots += 1;
-        _logMembership(M_DEAL_OPEN, q.dealId, bytes32(uint256(uint160(q.provider))));
-        emit DealOpened(q.dealId, msg.sender, q.provider, q.deadlineIdx, q.shard);
+        _logMembership(M_DEAL_OPEN, dealId, bytes32(uint256(uint160(q.provider))));
+        emit DealOpened(dealId, msg.sender, q.provider, deadlineIdx, shard);
     }
 
     /// [SPEC UC-02 bước ⑤] Nút đăng ký gốc niêm phong.
@@ -513,27 +701,254 @@ contract EngramManager {
 
     /// [SPEC UC-02 A3] Nút không đăng ký sealed_root trong hạn → ai gọi cũng được.
     /// Khách lấy lại TOÀN BỘ ký quỹ. Phí niêm phong chưa mở khoá nên cũng về khách.
-    function abortDeal(bytes32 dealId, uint64 currentDeadline) external {
+    /// [T2.4] Khách huỷ hợp đồng chưa được niêm phong.
+    ///
+    /// BẢN TRƯỚC nhận `currentDeadline` TỪ CHÍNH NGƯỜI GỌI, và `openedAtDeadline`
+    /// không bao giờ được gán nên luôn bằng 0. Kết quả: bất kỳ ai cũng huỷ được
+    /// mọi hợp đồng đang Pending vào bất cứ lúc nào. Khách lấy lại ký quỹ, nút
+    /// mất 1,26 giờ CPU niêm phong. Đây đúng là kịch bản griefing mà thiết kế
+    /// định chặn.
+    ///
+    /// Giờ mốc thời gian lấy từ `lastCommittedEpoch`, một giá trị của hợp đồng,
+    /// và chỉ khách mới gọi được.
+    function abortDeal(bytes32 dealId) external {
         StorageDeal storage d = _deals[dealId];
         if (d.state != DealState.Pending) revert WrongState();
-        if (currentDeadline < d.openedAtDeadline + ABORT_AFTER_DEADLINES) revert AbortTooEarly();
+        if (msg.sender != d.customer) revert WrongState();
+        if (lastCommittedEpoch < d.openedAtEpoch + ABORT_AFTER_EPOCHS) revert AbortTooEarly();
 
         uint256 refund = d.escrowWei + (d.sealingFeeReleased ? 0 : d.sealingFeeWei);
         d.state = DealState.Aborted;
         providers[d.provider].usedSlots -= 1;
 
-        if (d.state == DealState.Active && activeDealCount > 0) activeDealCount -= 1;
         _logMembership(M_DEAL_CLOSED, dealId, bytes32(0));
         (bool ok,) = payable(d.customer).call{value: refund}("");
         require(ok, "hoan tien that bai");
         emit DealAborted(dealId, d.customer);
     }
 
+    /// [T2.1] Đóng hợp đồng đã hết hạn.
+    ///
+    /// VÌ SAO BẮT BUỘC PHẢI CÓ. `activeDealCount` chỉ tăng: nó tăng ở
+    /// `registerSealed` và nhánh giảm trong `abortDeal` là CODE CHẾT theo hai
+    /// cách cùng lúc — hàm đã chặn mọi state khác `Pending` ở đầu, và state đã
+    /// bị gán `Aborted` trước khi nhánh đó đọc.
+    ///
+    /// Hệ quả nằm đúng trên đóng góp chính: mắt xích ④ đòi
+    /// `numVerified == expectedDealCount`. Khi hợp đồng đầu tiên hết hạn, không
+    /// prover nào tạo được đẳng thức đó nữa, và CẢ CHUỖI ĐỨNG VĨNH VIỄN.
+    ///
+    /// Khác mọi lỗ khác ở một điểm: cái này KHÔNG CẦN kẻ tấn công, nó tự xảy ra.
+    ///
+    /// Mở cho mọi người gọi: đóng một hợp đồng đã hết hạn không hại ai, và để
+    /// mở thì không phụ thuộc việc khách hay nút có nhớ gọi hay không.
+    function closeExpiredDeal(bytes32 dealId) external {
+        StorageDeal storage d = _deals[dealId];
+        if (d.state != DealState.Active) revert WrongState();
+        if (lastCommittedEpoch < d.endEpoch) revert AbortTooEarly();
+
+        d.state = DealState.Closed;
+        if (activeDealCount > 0) activeDealCount -= 1;
+        StorageProvider storage p = providers[d.provider];
+        if (p.usedSlots > 0) p.usedSlots -= 1;
+
+        // [R12] Hoàn phần ký quỹ CHƯA TIÊU cho khách. Không có bước này thì tiền
+        // nằm lại trong hợp đồng vĩnh viễn. Từ [R1], `escrowWei` đã được trừ dần
+        // mỗi lần trả thưởng, nên số còn lại đúng là phần chưa dùng.
+        uint256 leftover = d.escrowWei;
+        d.escrowWei = 0;
+
+        _logMembership(M_DEAL_CLOSED, dealId, bytes32(0));
+        emit DealClosed(dealId, d.endEpoch);
+
+        if (leftover > 0) {
+            (bool ok,) = payable(d.customer).call{value: leftover}("");
+            require(ok, "hoan ky quy du that bai");
+        }
+    }
+
     /*═══════════════════════════════════════════════════════════════════════
       9. CAM KẾT EPOCH  ·  [SPEC §F.2.3 pha ④]
 
-      Đây là hàm mà cả kiến trúc phục vụ. Sáu việc, theo thứ tự, tổng 487.109 gas.
+      Đây là hàm mà cả kiến trúc phục vụ. Sáu việc, theo thứ tự, tổng 474.260 gas.
     ═══════════════════════════════════════════════════════════════════════*/
+
+    /// [R3] Xin đổi địa chỉ Celestia. Chỉ hiệu lực từ epoch SAU.
+    ///
+    /// Không cho đổi tức thì, vì đổi giữa chừng một epoch là một đường né phạt:
+    /// blob nút đã đăng dưới địa chỉ cũ lập tức bị bộ lọc signer loại, và một
+    /// phán quyết FAIL đang chờ biến thành ABSENT.
+    function requestCelestiaAddressChange(bytes20 newAddr, bytes calldata ownershipProof)
+        external
+    {
+        StorageProvider storage p = providers[msg.sender];
+        if (p.capacitySlots == 0) revert NotProvider();
+        require(ownershipProof.length > 0, "thieu chung minh khoa Celestia");
+        p.pendingCelestiaAddress = newAddr;
+        p.celestiaChangeEffectiveEpoch = lastCommittedEpoch + 2;
+        emit CelestiaAddressChangeRequested(msg.sender, newAddr, p.celestiaChangeEffectiveEpoch);
+    }
+
+    /// Áp dụng thay đổi khi đã tới epoch hiệu lực. Ai gọi cũng được.
+    function applyCelestiaAddressChange(address provider) external {
+        StorageProvider storage p = providers[provider];
+        if (p.pendingCelestiaAddress == bytes20(0)) revert WrongState();
+        if (lastCommittedEpoch < p.celestiaChangeEffectiveEpoch) revert AbortTooEarly();
+        p.celestiaAddress = p.pendingCelestiaAddress;
+        p.pendingCelestiaAddress = bytes20(0);
+        _logMembership(M_PROVIDER, bytes32(uint256(uint160(provider))),
+                       bytes32(uint256(uint160(uint256(bytes32(p.celestiaAddress)) >> 96))));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  CỌC NHÀ CUNG CẤP: xin rút, khoá, rút   [T3.4-A]
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // BẢN TRƯỚC khai `withdrawRequestedAtEpoch` và `COLLATERAL_LOCK_EPOCHS` mà
+    // KHÔNG HÀM NÀO DÙNG. Mã mô tả một cơ chế không tồn tại là loại tài liệu sai
+    // nguy hiểm nhất, vì nó đọc như đã làm rồi.
+
+    /// Xin rút cọc. Bắt đầu đếm khoá.
+    ///
+    /// Vì sao cần khoá: phán quyết của epoch e chỉ rút được sau khi epoch đó
+    /// `Final`, tức trễ tới hai epoch. Cho rút ngay thì nút xoá dữ liệu, xin rút,
+    /// lấy cọc về TRƯỚC khi lá phạt của nó kịp lên chuỗi.
+    function requestCollateralWithdraw() external {
+        StorageProvider storage p = providers[msg.sender];
+        if (p.capacitySlots == 0) revert NotProvider();
+        p.withdrawRequestedAtEpoch = lastCommittedEpoch;
+        emit CollateralWithdrawRequested(msg.sender, lastCommittedEpoch + COLLATERAL_LOCK_EPOCHS);
+    }
+
+    /// Rút phần cọc KHÔNG bị ràng buộc bởi khe đang dùng.
+    function withdrawCollateral(uint256 amount) external {
+        StorageProvider storage p = providers[msg.sender];
+        if (p.capacitySlots == 0) revert NotProvider();
+        if (p.withdrawRequestedAtEpoch == 0) revert WrongState();
+        if (lastCommittedEpoch < p.withdrawRequestedAtEpoch + COLLATERAL_LOCK_EPOCHS) {
+            revert AbortTooEarly();
+        }
+        // Giữ lại đủ cọc cho mọi khe đang dùng, nếu không thì hợp đồng đang chạy
+        // mất neo kinh tế ngay giữa chừng.
+        uint256 locked = uint256(p.usedSlots) * MIN_COLLATERAL_PER_SLOT;
+        if (p.collateralWei < locked + amount) revert InsufficientCollateral();
+
+        p.collateralWei -= amount;
+        p.withdrawRequestedAtEpoch = 0;
+        (bool ok,) = payable(msg.sender).call{value: amount}("");
+        require(ok, "rut coc that bai");
+        emit CollateralWithdrawn(msg.sender, amount);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  AGGREGATOR  ·  đăng ký, chỉ định, phạt khi im lặng   [T2.3-B]
+    // ═══════════════════════════════════════════════════════════════════
+
+    function registerAggregator() external payable {
+        AggregatorInfo storage a = aggregators[msg.sender];
+        if (msg.value + a.collateralWei < MIN_AGG_COLLATERAL) revert InsufficientCollateral();
+        if (!a.registered) {
+            a.registered = true;
+            aggregatorSet.push(msg.sender);
+        }
+        a.collateralWei += msg.value;
+        emit AggregatorRegistered(msg.sender, a.collateralWei);
+    }
+
+    /// Ai được chỉ định cam kết epoch kế tiếp.
+    ///
+    /// Quay vòng chứ không cố định: aggregator cố định mà im lặng thì cả chuỗi
+    /// kẹt, và không có đường thay người.
+    function designatedAggregator() public view returns (address) {
+        uint256 n = aggregatorSet.length;
+        if (n == 0) return address(0);
+        // [T2.3-B, vá vòng rà] BỎ QUA aggregator đã tụt dưới cọc tối thiểu.
+        //
+        // Không có bước này thì có một đòn tính sống rẻ: đăng ký nhiều địa chỉ
+        // rồi rút hết cọc lúc không được chỉ định. Địa chỉ rỗng vẫn nằm trong
+        // tập, vẫn tới lượt, và `reportAggregatorTimeout` cắt 10 % của 0 = 0.
+        // Mỗi xác sống như vậy đốt trọn một kỳ COMMIT_PERIOD_BLOCKS.
+        for (uint256 i = 0; i < n; i++) {
+            address cand = aggregatorSet[(aggRotation + i) % n];
+            if (aggregators[cand].collateralWei >= MIN_AGG_COLLATERAL) return cand;
+        }
+        return address(0);
+    }
+
+    /// Báo aggregator được chỉ định đã để lỡ hạn.
+    ///
+    /// KHÔNG huỷ epoch. Chỉ cắt cọc người được chỉ định, chuyển lượt cho người
+    /// kế tiếp, và gia hạn. Epoch vẫn cam kết được — đây là chỗ khác căn bản so
+    /// với `voidEpoch`, vốn vứt bỏ công sức của cả mạng trong một ngày.
+    function reportAggregatorTimeout(uint64 epoch) external {
+        if (epoch != lastCommittedEpoch + 1) revert EpochOutOfOrder();
+
+        // [T2.3-B] Trong hạn thì chỉ người được chỉ định nộp được. Quá hạn thì
+        // MỞ CHO MỌI NGƯỜI — tính sống quan trọng hơn việc giữ độc quyền, và
+        // người được chỉ định đã bị cắt cọc qua `reportAggregatorTimeout`.
+        address designated = designatedAggregator();
+        if (
+            designated != address(0)
+            && block.number <= commitDeadlineBlock
+            && msg.sender != designated
+        ) revert NotDesignatedAggregator();
+        if (block.number <= commitDeadlineBlock) revert DeadlineNotPassed();
+        if (aggregatorSet.length == 0) revert NoAggregators();
+
+        address agg = designatedAggregator();
+        AggregatorInfo storage a = aggregators[agg];
+
+        if (agg == address(0)) revert NoAggregators();
+
+        uint256 slashed = (a.collateralWei * AGG_TIMEOUT_SLASH_BPS) / 10_000;
+        if (slashed > a.collateralWei) slashed = a.collateralWei;
+        a.collateralWei -= slashed;
+        a.timeouts += 1;
+
+        // Chuyển lượt TRƯỚC khi gửi tiền, để người báo không thể quay lại gọi
+        // tiếp trong cùng một giao dịch mà vẫn nhắm đúng nạn nhân cũ.
+        aggRotation += 1;
+        commitDeadlineBlock = uint64(block.number) + COMMIT_PERIOD_BLOCKS;
+
+        uint256 bounty = (slashed * BOUNTY_BPS) / 10_000;
+        if (bounty > 0) {
+            (bool ok,) = payable(msg.sender).call{value: bounty}("");
+            require(ok, "chuyen hoa hong that bai");
+        }
+        emit AggregatorTimedOut(agg, epoch, slashed, msg.sender);
+        emit CommitDeadlineSet(epoch, commitDeadlineBlock);
+    }
+
+    /// [R6] Xin rút cọc aggregator. Bắt đầu đếm khoá.
+    function requestAggregatorWithdraw() external {
+        AggregatorInfo storage a = aggregators[msg.sender];
+        if (!a.registered) revert NotAggregator();
+        a.withdrawRequestedAtEpoch = lastCommittedEpoch;
+    }
+
+    /// Rút cọc aggregator.
+    ///
+    /// BẢN TRƯỚC chỉ chặn người ĐANG được chỉ định. Aggregator biết mình sắp tới
+    /// lượt thì rút trước, tới lượt thì im lặng, và `reportAggregatorTimeout`
+    /// không còn gì để cắt.
+    ///
+    /// Giờ dùng lại đúng mẫu khoá của cọc nhà cung cấp: xin rút, chờ
+    /// COLLATERAL_LOCK_EPOCHS epoch, rồi mới rút. Trong khoảng đó nếu tới lượt
+    /// mà im lặng thì vẫn bị cắt.
+    function withdrawAggregatorCollateral(uint256 amount) external {
+        AggregatorInfo storage a = aggregators[msg.sender];
+        if (!a.registered) revert NotAggregator();
+        if (msg.sender == designatedAggregator()) revert WrongState();
+        if (a.withdrawRequestedAtEpoch == 0) revert WrongState();
+        if (lastCommittedEpoch < a.withdrawRequestedAtEpoch + COLLATERAL_LOCK_EPOCHS) {
+            revert AbortTooEarly();
+        }
+        if (amount > a.collateralWei) revert InsufficientCollateral();
+        a.collateralWei -= amount;
+        a.withdrawRequestedAtEpoch = 0;
+        (bool ok,) = payable(msg.sender).call{value: amount}("");
+        require(ok, "rut coc that bai");
+    }
 
     function commitEpoch(uint64 epoch, bytes calldata proof, bytes calldata publicValues) external {
         // ① Độ dài calldata cố định — public values LUÔN là 297 byte.
@@ -592,6 +1007,11 @@ contract EngramManager {
         });
         currentStateRoot = pv.newStateRoot;
         lastCommittedEpoch = epoch;
+
+        // [T2.3-B] Đặt hạn chót cho epoch KẾ TIẾP, và chuyển lượt aggregator.
+        commitDeadlineBlock = uint64(block.number) + COMMIT_PERIOD_BLOCKS;
+        if (aggregatorSet.length > 0) aggRotation += 1;
+        emit CommitDeadlineSet(epoch + 1, commitDeadlineBlock);
 
         // Đóng băng sổ cho epoch KẾ TIẾP. Đây là thời điểm gần biên epoch nhất
         // mà hợp đồng thật sự chạy — xem ghi chú ở `snapshotForCurrentEpoch`.
@@ -672,44 +1092,88 @@ contract EngramManager {
     /// Nhận CÁC TRƯỜNG của lá, tự băm lại, rồi mới leo cây. Digest và số tiền
     /// không còn rời nhau được. Bỏ luôn tham số `beneficiary`: tiền đi tới địa
     /// chỉ `provider` ghi TRONG lá, không tới địa chỉ người gọi tự khai.
+    /// [T3.5] Gom các trường của lá vào một struct thay vì 10 tham số rời.
+    /// Không phải thẩm mỹ: 10 tham số cộng biến cục bộ làm tràn stack EVM, và
+    /// đó chính là lỗi mà bản trước gặp phải khi thêm phần trừ cọc.
+    struct LeafClaim {
+        uint64 epoch;
+        address provider;
+        bytes32 dealId;
+        uint8 verdict;
+        uint32 challengesTotal;
+        uint32 challengesPassed;
+        uint256 rewardWei;
+        uint256 slashWei;
+    }
+
     function claimSettlement(
-        uint64 epoch,
-        address provider,
-        bytes32 dealId,
-        uint8 verdict,
-        uint32 challengesTotal,
-        uint32 challengesPassed,
-        uint256 rewardWei,
-        uint256 slashWei,
+        LeafClaim calldata c,
         bytes32[] calldata merkleProof,
         uint256 leafIndex
     ) external {
-        EpochRecord storage e = epochs[epoch];
+        EpochRecord storage e = epochs[c.epoch];
         if (e.state != EpochState.Final) revert EpochNotFinal();
 
         bytes32 leafDigest = _leafDigest(
-            epoch, provider, dealId, verdict,
-            challengesTotal, challengesPassed, rewardWei, slashWei
+            c.epoch, c.provider, c.dealId, c.verdict,
+            c.challengesTotal, c.challengesPassed, c.rewardWei, c.slashWei
         );
         if (settlementClaimed[leafDigest]) revert AlreadyClaimed();
 
-        // [SPEC §I.1.2 ④] Khai tuần tự. Thưởng tích luỹ nên từ khoảng epoch 11,
-        // khai có lợi hơn im lặng.
-        if (lastClaimedEpoch[provider] + 1 != epoch && lastClaimedEpoch[provider] != 0) {
-            revert ClaimOutOfOrder();
-        }
+        // ── [R4] QUY TẮC KHAI TUẦN TỰ ĐÃ BỎ ────────────────────────────
+        //
+        // Bản trước đòi `lastClaimedEpoch + 1 == epoch`. Mục đích ban đầu của nó
+        // là chống khai lại. Nhưng từ bản vá D1, `epoch` đã nằm TRONG ảnh trước
+        // của lá, nên `settlementClaimed[leafDigest]` một mình đã chống khai lại
+        // đủ: mỗi lá chỉ rút được một lần, vĩnh viễn.
+        //
+        // Giữ quy tắc tuần tự thì nó chỉ còn tác hại: nếu epoch 6 bị `voidEpoch`
+        // hoặc nút không có lá nào ở epoch 6, thì mọi phần thưởng từ epoch 7 trở
+        // đi KHÔNG RÚT ĐƯỢC VĨNH VIỄN, vì không có gì để khai cho epoch 6.
+        //
+        // `lastClaimedEpoch` vẫn ghi để tiện theo dõi, nhưng không còn là điều
+        // kiện.
 
         if (_merkleRoot(leafDigest, merkleProof, leafIndex) != e.resultsRoot) {
             revert BadMerkleProof();
         }
 
         settlementClaimed[leafDigest] = true;
-        lastClaimedEpoch[provider] = epoch;
+        if (c.epoch > lastClaimedEpoch[c.provider]) lastClaimedEpoch[c.provider] = c.epoch;
+
+        // ── [T1.2-A] TRỪ CỌC THẬT ──────────────────────────────────────
+        //
+        // BẢN TRƯỚC: `slashWei` chỉ dùng để TÍNH hoa hồng, không trừ cọc của ai
+        // cả, và hoa hồng được chi từ số dư hợp đồng. Hai hệ quả:
+        //   ① nút bị phán FAIL KHÔNG MẤT GÌ, nên toàn bộ lập luận kinh tế dựa
+        //      trên mức phạt gấp 10 lần doanh thu là lập luận về một cơ chế
+        //      KHÔNG TỒN TẠI on-chain;
+        //   ② lá phạt thành một đường RÚT TIỀN: hoa hồng chi từ ký quỹ của
+        //      người khác.
+        //
+        // Giờ cắt từ `collateralWei` của chính nút bị phạt, và cắt tối đa bằng
+        // số cọc thực có. Hoa hồng chỉ trả trong phạm vi số đã cắt được, nên
+        // hợp đồng không bao giờ chi nhiều hơn số nó vừa thu.
+        uint256 slashed = 0;
+        if (c.slashWei > 0) {
+            StorageProvider storage sp = providers[c.provider];
+            slashed = c.slashWei > sp.collateralWei ? sp.collateralWei : c.slashWei;
+            sp.collateralWei -= slashed;
+            emit CollateralSlashed(c.provider, c.epoch, slashed, c.slashWei);
+
+            // [R2] Phép kiểm cọc chỉ chạy lúc NHẬN hợp đồng mới, nên nút đã bị
+            // cắt xuống dưới ngưỡng vẫn giữ nguyên các hợp đồng đang chạy, và
+            // chúng mất neo kinh tế: lần FAIL sau không còn gì để cắt.
+            if (sp.collateralWei < uint256(sp.usedSlots) * MIN_COLLATERAL_PER_SLOT) {
+                sp.suspended = true;
+                emit ProviderSuspendedEvent(c.provider, sp.collateralWei, sp.usedSlots);
+            }
+        }
 
         uint256 bounty = 0;
         if (
-            slashWei > 0
-            && msg.sender != provider
+            slashed > 0
+            && msg.sender != c.provider
             // [SPEC §H.1.7] Không trả hoa hồng cho epoch mà cửa sổ DA bị lấp đầy.
             // Khi đó lá phạt không phân biệt được "nút gian" với "nút bị chặn
             // không đăng được", nên treo tiền cho người săn là trả công cho
@@ -717,19 +1181,36 @@ contract EngramManager {
             && e.windowSaturation < WINDOW_SATURATION_THRESHOLD
         ) {
             // Lá PHẠT: không ai muốn nộp, nên mở cho mọi người kèm hoa hồng.
-            bounty = (slashWei * BOUNTY_BPS) / 10_000;
+            bounty = (slashed * BOUNTY_BPS) / 10_000;
         }
-        uint256 net = rewardWei > bounty ? rewardWei - bounty : 0;
+        // ── [R1] TRỪ KÝ QUỸ CỦA CHÍNH HỢP ĐỒNG ĐÓ ──────────────────────
+        //
+        // BẢN TRƯỚC không tham chiếu `escrowWei` một lần nào trong hàm này: thưởng
+        // trả từ quỹ chung, không có kế toán theo hợp đồng. Ba hệ quả: ký quỹ
+        // không bao giờ bị trừ nên hợp đồng không biết một deal đã tiêu hết tiền
+        // chưa; một lá với `rewardWei` bất thường vẫn được trả miễn nằm trong
+        // cây; và tổng chi có thể vượt tổng thu, chỉ lộ ra khi một `call` thất
+        // bại.
+        //
+        // Giờ mỗi lần trả là một lần trừ, và trừ không đủ thì revert. An toàn
+        // chuyển từ "tin guest tính đúng" sang "hợp đồng tự kiểm".
+        if (c.rewardWei > 0) {
+            StorageDeal storage dl = _deals[c.dealId];
+            if (dl.escrowWei < c.rewardWei) revert InsufficientEscrow();
+            dl.escrowWei -= c.rewardWei;
+        }
+
+        uint256 net = c.rewardWei > bounty ? c.rewardWei - bounty : 0;
 
         if (net > 0) {
-            (bool ok,) = payable(provider).call{value: net}("");
+            (bool ok,) = payable(c.provider).call{value: net}("");
             require(ok, "chuyen thuong that bai");
         }
         if (bounty > 0) {
             (bool ok2,) = payable(msg.sender).call{value: bounty}("");
             require(ok2, "chuyen hoa hong that bai");
         }
-        emit SettlementClaimed(leafDigest, provider, net, bounty);
+        emit SettlementClaimed(leafDigest, c.provider, net, bounty);
     }
 
     /*═══════════════════════════════════════════════════════════════════════
@@ -744,11 +1225,24 @@ contract EngramManager {
       con số vô nghĩa vì không ai chọn đường đắt. Ngưỡng worker tối thiểu CHƯA QUYẾT.
     ═══════════════════════════════════════════════════════════════════════*/
 
-    function voidEpoch(uint64 epoch, string calldata reason) external {
+    function voidEpoch(uint64 epoch) external {
+        // [T2.2-A] BẢN TRƯỚC KHÔNG KIỂM GÌ CẢ.
+        //
+        // Ai cũng gọi được, chỉ cần epoch chưa Final, tốn ~30.000 gas là vô hiệu
+        // hoá vĩnh viễn. Một cơ chế vừa là đường thoát vừa là vũ khí thì chưa
+        // phải cơ chế.
+        //
+        // Giờ `voidEpoch` là CHỐT CHẶN CUỐI, không phải đường thoát thường:
+        // `reportAggregatorTimeout` mới là đường thường, và nó KHÔNG vứt bỏ
+        // epoch mà chỉ đổi người. Chỉ khi đã quá hạn cộng ân hạn mà vẫn không ai
+        // cam kết nổi thì mới huỷ.
+        if (block.number <= commitDeadlineBlock + VOID_GRACE_BLOCKS) {
+            revert DeadlineNotPassed();
+        }
         EpochRecord storage e = epochs[epoch];
         if (e.state == EpochState.Final) revert WrongState();
         e.state = EpochState.Void;
-        emit EpochVoided(epoch, reason);
+        emit EpochVoided(epoch, "qua han commitEpoch va het an han");
     }
 
     /*═══════════════════════════════════════════════════════════════════════

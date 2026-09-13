@@ -73,11 +73,11 @@ contract BaselinesTest is Test {
         blobstream = new MockBlobstream();
         engram = new EngramManager(
             new MockVerifier(), blobstream,
-            keccak256("VK"), keccak256("AVK"), keccak256("WVK"), keccak256("GVK"), bytes32(0)
+            keccak256("VK"), keccak256("AVK"), keccak256("WVK"), keccak256("GVK"), bytes32(0), 48, 10
         );
         engramPairing = new EngramManager(
             new PairingCostVerifier(), blobstream,
-            keccak256("VK"), keccak256("AVK"), keccak256("WVK"), keccak256("GVK"), bytes32(0)
+            keccak256("VK"), keccak256("AVK"), keccak256("WVK"), keccak256("GVK"), bytes32(0), 48, 10
         );
     }
 
@@ -180,7 +180,7 @@ contract BaselinesTest is Test {
     function _engramOnce(uint256 salt) internal returns (uint256, uint256) {
         EngramManager m = new EngramManager(
             new PairingCostVerifier(), blobstream,
-            keccak256("VK"), keccak256("AVK"), keccak256("WVK"), keccak256("GVK"), bytes32(0)
+            keccak256("VK"), keccak256("AVK"), keccak256("WVK"), keccak256("GVK"), bytes32(0), 48, 10
         );
         bytes memory pv = _pv(m, 1, bytes32(0));
         bytes memory proof = new bytes(356);

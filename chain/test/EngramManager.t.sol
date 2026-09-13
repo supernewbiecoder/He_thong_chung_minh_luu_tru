@@ -35,7 +35,7 @@ contract EngramManagerTest is Test {
             keccak256("ENGRAM_ACTIVATION_VK_V1"),
             keccak256("ENGRAM_WORKER_PROGRAM_V1"),
             keccak256("ENGRAM_AGGREGATOR_PROGRAM_V1"),
-            bytes32(0)
+            bytes32(0), 48, 10
         );
         vm.deal(customer, 100 ether);
         vm.deal(provider, 100 ether);
@@ -88,7 +88,7 @@ contract EngramManagerTest is Test {
         //   2 collateralWei     6 registeredAtEpoch
         //   3 capacitySlots     7 providerRoot
         //   4 usedSlots         8 multiaddr
-        (, uint256 col, uint64 cap, , , , , ) = m.providers(provider);
+        (, uint256 col, uint64 cap, , , , , , , , ) = m.providers(provider);
         assertEq(cap, 4);
         assertEq(col, 4 * m.MIN_COLLATERAL_PER_SLOT());
     }
@@ -108,24 +108,20 @@ contract EngramManagerTest is Test {
         uint256 escrow = 10 * 1e12;
 
         vm.prank(customer);
-        m.openDeal{value: escrow + fee}(
+        bytes32 dealId = m.openDeal{value: escrow + fee}(
             EngramManager.DealParams({
-                dealId: DEAL,
                 provider: provider,
                 pieceRoot: keccak256("piece"),
                 pieceSizeReal: 1024,
                 pricePerEpochWei: 1e12,
                 durationEpochs: 10,
-                deadlineIdx: 3,
-                shard: 11,
-                activationBeacon: keccak256("beacon"),
                 sealingFeeWei: fee
             })
         );
 
         uint256 before = provider.balance;
         vm.prank(provider);
-        m.registerSealed(DEAL, keccak256("sealed"), keccak256("proot"));
+        m.registerSealed(dealId, keccak256("sealed"), keccak256("proot"));
         assertEq(provider.balance - before, fee, "phi niem phong phai ve nut");
     }
 
@@ -240,14 +236,12 @@ contract EngramManagerTest is Test {
         );
 
         for (uint256 i; i < count; ++i) {
-            bytes32 id = keccak256(abi.encodePacked("deal", i));
             vm.prank(customer);
-            mgr.openDeal{value: 1e12}(
+            bytes32 id = mgr.openDeal{value: 1e12}(
                 EngramManager.DealParams({
-                    dealId: id, provider: prov, pieceRoot: keccak256("p"),
+                    provider: prov, pieceRoot: keccak256(abi.encodePacked("p", i)),
                     pieceSizeReal: 1024, pricePerEpochWei: 1e12, durationEpochs: 1,
-                    deadlineIdx: uint8(i % 4), shard: uint32(i % 2),
-                    activationBeacon: keccak256("b"), sealingFeeWei: 0
+                    sealingFeeWei: 0
                 })
             );
             vm.prank(prov);
@@ -261,7 +255,7 @@ contract EngramManagerTest is Test {
             new PairingCostVerifier(), blobstream,
             keccak256("ENGRAM_STORAGE_VK_V1"), keccak256("ENGRAM_ACTIVATION_VK_V1"),
             keccak256("ENGRAM_WORKER_PROGRAM_V1"), keccak256("ENGRAM_AGGREGATOR_PROGRAM_V1"),
-            bytes32(0)
+            bytes32(0), 48, 10
         );
     }
 

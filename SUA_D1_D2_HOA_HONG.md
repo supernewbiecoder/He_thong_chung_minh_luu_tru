@@ -199,3 +199,47 @@ Các con số đã sẵn sàng để điền:
 67 pass. Mới thêm ở vòng 2:
 - `aggregator/tests/test_snapshot_binding.py`
 - `aggregator/tests/test_cell_set_derivation.py`
+
+---
+
+# Vòng 3: hiện thực các phương án đã chọn
+
+Xem `RA_SOAT_SAU_KHI_VA.md` để biết còn lại gì.
+
+| Mã | Việc | Phương án | Nơi sửa |
+|---|---|---|---|
+| T1.1 b1 | Guest tự dẫn xuất khoảng chiều cao | — | `worker/verify.py` |
+| T1.2 | `slashWei` trừ cọc thật | **A** | `claimSettlement` |
+| T1.3 | `openDeal` dẫn xuất bốn trường | — | `openDeal` |
+| T2.1 | `closeExpiredDeal` | — | hợp đồng |
+| T2.2 | `voidEpoch` chỉ sau hạn + ân hạn | **A** | `voidEpoch` |
+| T2.3 | Phạt aggregator im lặng, đề cử người mới | **B** | 3 hàm mới |
+| T2.4 | `abortDeal` không nhận mốc từ người gọi | — | `abortDeal` |
+| T2.5 | Cầu dao nhả theo tín hiệu nghẽn DA | **A** | `circuit_breaker.py` |
+| T3.1 | Đính chính bao đóng 23,9 % | — | `constants.py` |
+| T3.2 | Sàn kẻ gian + báo cáo Eq. (1) | cả hai | `constants.py`, `clock.py` |
+| T3.3 | Docstring `epoch_bounds` | sửa docstring | `clock.py` |
+| T3.4 | Đường rút cọc | **A** | 2 hàm mới |
+| T3.5 | δ docstring, dọn hằng số | — | nhiều chỗ |
+| T4.1 | Gấp dần theo deadline | hiện thực | `aggregate.py` |
+| T4.2 | Cửa thoát cưỡng chế | **A**, chỉ viết vào bài | — |
+
+## Kiểm chứng
+
+```
+python3 -m pytest common/tests worker/tests aggregator/tests -q     → 77 passed
+solc 0.8.24 --optimize --optimize-runs 200 src/EngramManager.sol    → sạch
+bytecode                                                            → 16.921 B
+6 file test Solidity                                                → biên dịch sạch
+forge test                                                          → CHƯA CHẠY
+```
+
+## Đổi API, cần sửa ở nơi gọi
+
+- `verify_shard(...)`: bỏ `deadline`, `height_start`, `height_end`; thêm `epoch`,
+  `deadline_idx`, `clock`
+- `claimSettlement(...)`: 10 tham số rời → `LeafClaim` struct cộng đường Merkle
+- `openDeal(...)`: `DealParams` bỏ `dealId`, `deadlineIdx`, `shard`,
+  `activationBeacon`; hàm nay **trả về** `dealId`
+- `abortDeal(...)`: bỏ tham số `currentDeadline`
+- `circuit_breaker.evaluate(...)`: thêm `window_saturation`

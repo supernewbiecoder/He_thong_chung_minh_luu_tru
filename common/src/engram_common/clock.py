@@ -89,9 +89,27 @@ class Clock:
         return slot.window_start <= height < slot.window_end
 
     def epoch_bounds(self, epoch: int) -> tuple[int, int]:
-        """Cửa sổ DA của cả epoch. [SPEC §F.2.1 ③] Lát kín: da_start(e+1) ==
-        da_end(e). Không kẽ hở, không chồng lấn, không phát lại — hợp đồng chỉ
-        kiểm một bất đẳng thức và một phép bằng."""
+        """Khoảng DA của cả epoch: từ lúc deadline 0 mở tới lúc cửa sổ cuối đóng.
+
+        [ĐÍNH CHÍNH — T3.3] Bản trước viết "Lát kín: da_start(e+1) == da_end(e).
+        Không kẽ hở". ĐIỀU ĐÓ SAI:
+
+            epoch_bounds(0) = (1000, 15305)
+            epoch_bounds(1) = (15400, 29705)   ← hở 95 block
+
+        Số học: epoch dài D·L_d = 14.400 block, nhưng khoảng này chỉ chạy tới
+        cửa sổ đóng của deadline cuối, tức 47·300 + δ + W = 14.305.
+
+        KHOẢNG HỞ KHÔNG PHẢI LỖI. Nó chính là phần dư L_d − δ − W xuất hiện sau
+        MỌI deadline, chỉ là cái sau deadline cuối. Ai đăng blob trong đó thì
+        đơn giản là NỘP TRỄ, y như nộp sau khi cửa sổ đóng ở bất kỳ deadline nào.
+        Filecoin cũng để deadline không chồng lấn vì cùng lý do.
+
+        Cái sai là LỜI HỨA. Nếu sau này ai viết một phép kiểm chống phát lại dựa
+        trên đẳng thức đó thì phép kiểm ấy sẽ luôn thất bại. Muốn có đẳng thức
+        thì đổi định nghĩa thành [h_d(e,0), h_d(e+1,0)) — nhưng khi đó khoảng
+        này không còn là "khoảng có blob" nữa.
+        """
         first = self.slot_at(epoch, 0)
         last = self.slot_at(epoch, self.p.deadlines_per_epoch - 1)
         return first.open_height, last.window_end
@@ -242,3 +260,44 @@ def window_safety_ok(
     """
     w_seconds = w_blocks * t_block_s
     return t_prove_s <= w_seconds < t_regen_s + t_prove_s
+
+
+def window_safety_report(
+    *, w_blocks: int, t_prove_s: float | None,
+    t_regen_s: float | None = None,
+    t_block_s: float = CELESTIA_BLOCK_SECONDS,
+) -> dict:
+    """[T3.2] Kiểm Eq. (1) ở tham số hiện tại, và nói rõ chỗ nào CHƯA BIẾT.
+
+    Trả về một dict thay vì một bool, vì câu trả lời trung thực hiện nay không
+    phải "đúng" hay "sai" mà là "chưa đo `t_prove` nên chưa kết luận được".
+
+    `t_regen_s` bỏ trống thì lấy số ĐÃ ĐÍNH CHÍNH theo bao đóng 23,9 %, không lấy
+    số 38,4 phút của đặc tả — dùng số cũ là tự cho mình một biên an toàn không có
+    thật.
+    """
+    from .constants import ADVERSARY_FLOOR_MINUTES_MEASURED
+
+    if t_regen_s is None:
+        t_regen_s = ADVERSARY_FLOOR_MINUTES_MEASURED * 60.0
+
+    w_seconds = w_blocks * t_block_s
+    out = {
+        "w_seconds": w_seconds,
+        "t_regen_s": t_regen_s,
+        "t_prove_s": t_prove_s,
+        "left_ok": None,
+        "right_ok": None,
+        "t_prove_min_required_s": max(0.0, w_seconds - t_regen_s),
+    }
+    if t_prove_s is None:
+        out["verdict"] = (
+            f"CHƯA KẾT LUẬN ĐƯỢC: cần đo t_prove. Vế phải chỉ đúng nếu "
+            f"t_prove > {out['t_prove_min_required_s']:.0f} giây."
+        )
+        return out
+
+    out["left_ok"] = t_prove_s <= w_seconds
+    out["right_ok"] = w_seconds < t_regen_s + t_prove_s
+    out["verdict"] = "THOẢ" if (out["left_ok"] and out["right_ok"]) else "KHÔNG THOẢ"
+    return out

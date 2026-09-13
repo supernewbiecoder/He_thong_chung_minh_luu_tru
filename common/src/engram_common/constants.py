@@ -52,8 +52,34 @@ SEAL_FANIN_PHI = 6
 
 VÌ SAO BẮT BUỘC: không có fan-in, r_i chỉ phụ thuộc mắt liền trước, nên kẻ gian
 lưu S mỗi 1.000 chunk (268 KB) rồi nối lại chuỗi từ giữa trong 0,04 GIÂY. Độ sâu
-tuần tự dài bao nhiêu cũng vô nghĩa. Với φ=6, chỉ 9 tầng phụ thuộc là bao đóng
-phủ hết 8,4 triệu vị trí, nên dựng lại MỘT vị trí = dựng lại CẢ sector."""
+tuần tự dài bao nhiêu cũng vô nghĩa.
+
+[ĐÍNH CHÍNH — T3.1] Bản trước viết: "với φ=6, chỉ 9 tầng phụ thuộc là bao đóng
+phủ hết 8,4 triệu vị trí, nên dựng lại MỘT vị trí = dựng lại CẢ sector."
+
+ĐO ĐƯỢC THÌ KHÁC: bao đóng BÃO HOÀ ở 23,9 % (10,1 % ở năm tầng, 23,4 % ở chín
+tầng, không đổi sau đó). Lập luận đếm 6^9 > 8,4 triệu bỏ qua đụng độ và bỏ qua
+việc phân bố vị trí TRÔI XUỐNG: đích fan-in lấy đều dưới chỉ số hiện tại, nên kỳ
+vọng vị trí giảm một nửa mỗi tầng.
+
+23,9 % vẫn ĐỦ — kẻ gian giữ điểm mốc vẫn phải dựng lại một phần tư sector, khoảng
+2,4·10^5 lần công so với không có fan-in. Nhưng 100 % là BẤT KHẢ ĐẠT dưới phân bố
+hiện tại, và mọi con số suy ra từ giả định 100 % đều phải tính lại — xem
+`ADVERSARY_FLOOR_MINUTES` ngay dưới."""
+
+ADVERSARY_FLOOR_MINUTES_SPEC = 38.4
+"""[ĐẶC TẢ §F.2.1] Sàn kẻ gian theo giả định dựng lại TOÀN BỘ sector."""
+
+ADVERSARY_FLOOR_MINUTES_MEASURED = 18.1
+"""[T3.2] Sàn kẻ gian sau khi lan đính chính bao đóng 23,9 %.
+
+Kẻ gian giữ điểm mốc chỉ phải dựng lại phần bao đóng, không phải cả sector, nên
+sàn tụt từ 38,4 xuống ~18,1 phút, và ~9,0 phút nếu phần cứng nhanh gấp đôi.
+
+HỆ QUẢ CHO Eq. (1): cửa sổ nộp W = 200 block = 20 phút, nên vế phải
+`W·t_block < t_regen + t_prove` chỉ còn đúng nếu `t_prove > 1,9 phút`. `t_prove`
+CHƯA AI ĐO. Nên vế phải hiện là một câu CHƯA BIẾT ĐÚNG HAY SAI, không phải một
+câu đã chứng minh. Dùng `clock.window_safety_report()` để kiểm khi đã có số."""
 
 SEAL_K_DELAY = 1
 """[CHỐT] Số lần lặp băm thêm trên chuỗi. =1 nghĩa là không thêm trễ; rate=4 đã
@@ -149,6 +175,24 @@ class TimingProfile:
     deadlines_per_epoch: int  # D
     submit_window_blocks: int  # W
     beacon_delay_blocks: int  # δ
+    """[T3.5] Trễ từ lúc deadline mở tới lúc cửa sổ nộp mở.
+
+    KHÔNG PHẢI ĐỂ CHỐNG REORG. Celestia chạy CometBFT nên chung cuộc ngay ở từng
+    block và không fork theo cấu trúc dưới giả định đa số cổ phần trung thực. Với
+    6 giây một block thì δ=5 chỉ là 30 giây, vừa thừa cho việc chờ chung cuộc
+    (đã có ngay) vừa thiếu nếu thật sự có fork.
+
+    HAI TÁC DỤNG THẬT:
+
+    ① Cho beacon LAN KỊP tới mọi nút. Block h_d tồn tại ngay ở chiều cao đó,
+       nhưng nút phải nhận được nó đã. Không có δ thì nút mạng nhanh biết thách
+       thức trước nút mạng chậm.
+
+    ② Bảo đảm window_start > h_d NGHIÊM NGẶT, nên người đề xuất block sinh beacon
+       không thể vừa thấy beacon vừa nhét bằng chứng của mình vào cùng block đó.
+
+    Filecoin làm cùng việc bằng WPoStChallengeLookback, chỉ ngược chiều: lấy mẫu
+    ngẫu nhiên TRƯỚC khi cửa sổ mở, để miner không phải chờ chain ổn định."""
     beacon_mix_blocks: int  # k_mix
 
     @property
