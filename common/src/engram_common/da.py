@@ -63,6 +63,37 @@ SHARE_SIZE = 512
 NAMESPACE_SIZE = 29
 
 
+_B32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+
+def bech32_to_bytes(addr: str) -> bytes:
+    """Giải mã địa chỉ bech32 của Cosmos thành 20 byte.
+
+    Không dùng thư viện ngoài: cả repo chạy bằng thư viện chuẩn, và một phép
+    giải mã 20 dòng không đáng để thêm phụ thuộc.
+    """
+    addr = addr.strip().lower()
+    pos = addr.rfind("1")
+    if pos < 1:
+        raise DAError(f"địa chỉ bech32 không hợp lệ: {addr!r}")
+    data = addr[pos + 1 :]
+    try:
+        vals = [_B32.index(c) for c in data[:-6]]      # bỏ 6 ký tự checksum
+    except ValueError as e:
+        raise DAError(f"ký tự không thuộc bảng bech32 trong {addr!r}: {e}")
+
+    acc, bits, out = 0, 0, bytearray()
+    for v in vals:
+        acc = (acc << 5) | v
+        bits += 5
+        while bits >= 8:
+            bits -= 8
+            out.append((acc >> bits) & 0xFF)
+    if len(out) != 20:
+        raise DAError(f"địa chỉ giải ra {len(out)} byte, cần 20: {addr!r}")
+    return bytes(out)
+
+
 class DAError(RuntimeError):
     pass
 
@@ -166,6 +197,7 @@ class CelestiaDA:
         )
         self.timeout = timeout
         self._id = 0
+        self._addr: str | None = None
 
     # ── ống RPC ────────────────────────────────────────────────────────────
 
@@ -237,35 +269,42 @@ class CelestiaDA:
         self._guard_submit()
         if len(namespace) != NAMESPACE_SIZE:
             raise DAError(f"namespace phải {NAMESPACE_SIZE} byte, nhận {len(namespace)}")
-        # ── KHÔNG gửi `signer` lên node ────────────────────────────────────
+        # ── `signer` BẮT BUỘC, và phải khớp khoá của chính node ────────────
         #
-        # ĐÃ THỬ VÀ BỊ TỪ CHỐI, và đó là bằng chứng tốt nhất cho thiết kế:
+        # Hai lần thử, hai lỗi, và cả hai đều là bằng chứng cho §J.2.1:
         #
-        #   blob signer E41F3584… does not match MsgPayForBlobs signer 5FD07CB6…
-        #   invalid blob signer
+        #   ① điền địa chỉ tuỳ ý →
+        #      "blob signer E41F3584… does not match MsgPayForBlobs signer
+        #       5FD07CB6… : invalid blob signer"
+        #      Đồng thuận ĐỐI CHIẾU trường signer với người ký giao dịch.
         #
-        # Đồng thuận Celestia ĐỐI CHIẾU trường signer trong share với người ký
-        # giao dịch, và từ chối nếu lệch. Nên không ai điền giả được địa chỉ của
-        # người khác — đúng tính chất mà §J.2.1 dựa vào để chống mạo danh blob.
+        #   ② bỏ trường đi →
+        #      "share version 1 requires signer of size 20bytes"
+        #      Node KHÔNG tự điền; share v1 bắt buộc có.
         #
-        # Bỏ trường đi để node tự điền bằng khoá của chính nó. Muốn biết địa chỉ
-        # thật thì gọi `account_address()`, hoặc đọc lại blob và xem `signer`.
+        # Nên chỉ còn một đường đúng: hỏi node địa chỉ của chính nó. Đó cũng là
+        # địa chỉ mà nút PHẢI đăng ký ở `registerProvider` — đăng ký sai thì blob
+        # của chính nó bị bộ lọc F3b loại, và nó tự biến mình thành ABSENT.
+        if signer != self.signer_bytes():
+            signer = self.signer_bytes()
+
         blob = {
             "namespace": base64.b64encode(namespace).decode(),
             "data": base64.b64encode(header.pack() + payload).decode(),
             "share_version": 1,
+            "signer": base64.b64encode(signer).decode(),
         }
         return int(self.call("blob.Submit", [[blob], {"gas_price": gas_price}]))
 
     def account_address(self) -> str:
-        """Địa chỉ bech32 mà node này ký giao dịch bằng.
+        """Địa chỉ bech32 mà node này ký giao dịch bằng, ví dụ `celestia1…`."""
+        if self._addr is None:
+            self._addr = self.call("state.AccountAddress", [])
+        return self._addr
 
-        Đây là giá trị sẽ xuất hiện trong trường signer của mọi blob node đăng,
-        nên nút PHẢI đăng ký đúng địa chỉ này ở `registerProvider`. Đăng ký sai
-        thì blob của chính nó bị bộ lọc F3b loại, và nó tự biến mình thành
-        ABSENT.
-        """
-        return self.call("state.AccountAddress", [])
+    def signer_bytes(self) -> bytes:
+        """20 byte tương ứng — đúng giá trị sẽ nằm trong trường signer của share."""
+        return bech32_to_bytes(self.account_address())
 
     def read(self, namespace: bytes, start: int, end: int) -> list[ObservedBlob]:
         """Đọc mọi blob trong namespace, trên khoảng chiều cao nửa mở [start, end).

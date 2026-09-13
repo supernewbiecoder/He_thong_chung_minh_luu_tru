@@ -79,6 +79,14 @@ def main() -> int:
     deal_id = keccak(b"DEAL", b"\x01")
     provider_id = keccak(b"PROVIDER", b"\x01")[:20]
     celestia_addr = keccak(b"CELESTIA", b"\x01")[:20]
+    # Với Celestia, địa chỉ signer do KHOÁ CỦA NODE quyết định, không do ta
+    # chọn — node từ chối blob có signer khác người ký giao dịch. Đây cũng là
+    # địa chỉ nút phải đăng ký ở `registerProvider`.
+    if kind == "celestia":
+        celestia_addr = da.signer_bytes()
+        print(f"   địa chỉ node (signer bắt buộc): {da.account_address()}")
+        print(f"   = {celestia_addr.hex()}")
+
     sec = Sector.create(work / "sectors", deal_id, N_CHUNKS)
     print(f"① sector trên đĩa      {sec.on_disk_bytes:>10,} byte   {sec.path.name}")
 
