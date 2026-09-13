@@ -24,15 +24,29 @@
 #   nghe trên loopback nên bỏ xác thực là chấp nhận được, và nó khớp với client
 #   trong repo (client bỏ header Authorization khi CELESTIA_AUTH_TOKEN rỗng).
 #   ĐỪNG dùng cờ này cho node nối mạng công khai.
+# ── MÁY DÙNG CHUNG: dựng BỘ RIÊNG bằng ENGRAM_NS ───────────────────────────
+#
+# Tên container là toàn cục trong Docker và KHÔNG chịu ảnh hưởng của tên project
+# compose. Nên hai người cùng dựng devnet trên một máy sẽ đụng nhau, và
+# `docker compose down` của người này KHÔNG gỡ được container của người kia —
+# nó chỉ gỡ thứ do chính project của mình tạo ra.
+#
+# Đặt hậu tố riêng để tách hẳn:
+#
+#     ENGRAM_NS=-tra CEL_RPC_PORT=47657 CEL_API_PORT=47658 make celestia-up
+#
+# Khi đó container thành engram-cel-validator-tra, volume và mạng cũng theo.
+# Nhớ đặt CÙNG bộ biến đó cho `celestia-down` và `e2e-real-celestia`, nếu không
+# sẽ thao tác nhầm sang bộ khác.
 # ═══════════════════════════════════════════════════════════════════════════
 services:
   engram-cel-validator:
     image: ghcr.io/celestiaorg/celestia-app:v6.4.4-mocha
-    container_name: engram-cel-validator
+    container_name: engram-cel-validator${ENGRAM_NS:-}
     volumes:
-      - engram_cel_validator:/home/celestia
+      - engram_cel_validator${ENGRAM_NS:-}:/home/celestia
     ports:
-      - "127.0.0.1:46657:26657"   # RPC đồng thuận — chỉ loopback
+      - "127.0.0.1:${CEL_RPC_PORT:-46657}:26657"   # RPC đồng thuận — chỉ loopback
     # ⚠ Image v6.4.4-mocha có ENTRYPOINT là /bin/celestia-appd, nên `command`
     #   bị nối thành `celestia-appd sh -c "..."` → lỗi unknown command "sh".
     #   Hướng dẫn chính thức viết cho image không có entrypoint. Ghi đè nó.
@@ -41,7 +55,7 @@ services:
       - |
         set -e
         # ⚠ KHÔNG dùng biến shell ở đây: Docker Compose nội suy $ trước khi
-        #   truyền vào container, nên "$H" thành chuỗi rỗng. Viết thẳng đường
+        #   truyền vào container, nên "$$H" thành chuỗi rỗng. Viết thẳng đường
         #   dẫn, hoặc phải escape thành $$H.
         #
         # `celestia-appd init` chỉ tạo genesis RỖNG. Chain từ chối khởi động với
@@ -64,33 +78,33 @@ services:
         exec celestia-appd start --home /home/celestia/.celestia-app --force-no-bbr --rpc.laddr tcp://0.0.0.0:26657 \
           --grpc.enable --grpc.address 0.0.0.0:9090
     networks:
-      - engram-cel-net
+      - engram-cel-net${ENGRAM_NS:-}
 
   engram-cel-bridge:
     image: ghcr.io/celestiaorg/celestia-node:v0.28.5-mocha
-    container_name: engram-cel-bridge
+    container_name: engram-cel-bridge${ENGRAM_NS:-}
     environment:
       - P2P_NETWORK=private
     volumes:
-      - engram_cel_bridge:/home/celestia
+      - engram_cel_bridge${ENGRAM_NS:-}:/home/celestia
     ports:
-      - "127.0.0.1:46658:26658"   # API node DA — script E2E gọi vào đây
+      - "127.0.0.1:${CEL_API_PORT:-46658}:26658"   # API node DA — script E2E gọi vào đây
     command: >
       celestia bridge start
       --p2p.network private
-      --core.ip engram-cel-validator
+      --core.ip engram-cel-validator${ENGRAM_NS:-}
       --rpc.addr 0.0.0.0
       --rpc.port 26658
       --rpc.skip-auth
     depends_on:
-      - engram-cel-validator
+      - engram-cel-validator${ENGRAM_NS:-}
     networks:
-      - engram-cel-net
+      - engram-cel-net${ENGRAM_NS:-}
 
 volumes:
-  engram_cel_validator:
-  engram_cel_bridge:
+  engram_cel_validator${ENGRAM_NS:-}:
+  engram_cel_bridge${ENGRAM_NS:-}:
 
 networks:
-  engram-cel-net:
+  engram-cel-net${ENGRAM_NS:-}:
     driver: bridge

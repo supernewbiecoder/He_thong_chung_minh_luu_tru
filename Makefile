@@ -123,22 +123,37 @@ clean:
 #
 # Ba mục tiêu dưới dựng devnet thật để kiểm ba điều đó.
 
-celestia-up:     ## Dựng devnet Celestia cục bộ (validator + bridge)
-	docker compose -f deploy/docker-compose.celestia-devnet.yml up -d
-	@echo "Chờ bridge lên... RPC ở http://127.0.0.1:46658"
+# MÁY DÙNG CHUNG: đặt ENGRAM_NS để có bộ container/volume/mạng riêng, và đặt
+# cổng khác để không đụng người đang chạy devnet khác. Ví dụ:
+#     make celestia-up ENGRAM_NS=-tra CEL_RPC_PORT=47657 CEL_API_PORT=47658
+# Nhớ dùng CÙNG bộ biến cho celestia-down, celestia-status, e2e-real-celestia.
+ENGRAM_NS     ?=
+CEL_RPC_PORT  ?= 46657
+CEL_API_PORT  ?= 46658
+CEL_ENV        = ENGRAM_NS=$(ENGRAM_NS) CEL_RPC_PORT=$(CEL_RPC_PORT) CEL_API_PORT=$(CEL_API_PORT)
+CEL_COMPOSE    = $(CEL_ENV) docker compose -p engram-cel$(ENGRAM_NS) \
+                 -f deploy/docker-compose.celestia-devnet.yml
 
-celestia-down:   ## Dừng và dọn devnet
-	docker compose -f deploy/docker-compose.celestia-devnet.yml down -v
+celestia-up:     ## Dựng devnet Celestia cục bộ (validator + bridge)
+	$(CEL_COMPOSE) up -d
+	@echo "Chờ bridge lên... API node ở http://127.0.0.1:$(CEL_API_PORT)"
+
+celestia-ps:     ## Xem container devnet của BỘ NÀY và của người khác
+	@docker ps -a --filter name=engram-cel --format \
+	  "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+celestia-down:   ## Dừng và dọn devnet CỦA BỘ NÀY
+	$(CEL_COMPOSE) down -v
 
 celestia-status: ## Kiểm devnet đã sẵn sàng chưa
-	@CELESTIA_RPC=http://127.0.0.1:46658 python3 -c "\
+	@CELESTIA_RPC=http://127.0.0.1:$(CEL_API_PORT) python3 -c "\
 import sys; sys.path.insert(0,'common/src'); \
 from engram_common.da import CelestiaDA; \
 print('chiều cao đầu chuỗi:', CelestiaDA().head_height())"
 
 run-celestia:    ## Chạy mô phỏng với DA THẬT thay vì bộ nhớ
 	ENGRAM_DA=celestia CELESTIA_LOCAL_DEVNET=1 \
-	CELESTIA_RPC=http://127.0.0.1:46658 $(MAKE) run
+	CELESTIA_RPC=http://127.0.0.1:$(CEL_API_PORT) $(MAKE) run
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  MẠCH THẬT  ·  Nova + Spartan trên BN254
@@ -157,7 +172,7 @@ e2e-real:        ## Chuỗi THẬT: sector → mạch → DA → verify
 
 e2e-real-celestia: ## Như trên nhưng DA là Celestia devnet thật
 	ENGRAM_DA=celestia CELESTIA_LOCAL_DEVNET=1 \
-	CELESTIA_RPC=http://127.0.0.1:46658 python3 scripts/e2e_real.py
+	CELESTIA_RPC=http://127.0.0.1:$(CEL_API_PORT) python3 scripts/e2e_real.py
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  ĐẾM CHU KỲ SP1  ·  nguồn của f và m
