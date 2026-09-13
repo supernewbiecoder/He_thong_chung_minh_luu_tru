@@ -56,4 +56,4 @@ docker-compose.override.yml
 
 # Logs and runtime files
 *.log
-*.pid
+*.pidresults/

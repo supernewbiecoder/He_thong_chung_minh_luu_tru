@@ -386,8 +386,22 @@ CALLDATA_BYTES = 868
 nên thêm byte này KHÔNG đổi độ dài calldata."""
 
 COMMIT_EPOCH_GAS = 487_109
-"""[ĐO] Biên lai giao dịch thật. KHÔNG ĐỔI qua bốn bậc độ lớn của N — biến
-động 0,0025 %. Đây là toàn bộ đóng góp của Engram gói trong một số."""
+"""[ĐO — CŨ, PHẢI ĐO LẠI] Biên lai giao dịch thật của một bản hợp đồng TRƯỚC.
+
+KHÔNG ĐỔI qua bốn bậc độ lớn của N — biến động 0,0025 %. Đây là toàn bộ đóng
+góp của Engram gói trong một số.
+
+⚠ HAI LÝ DO PHẢI ĐO LẠI TRƯỚC KHI TRÍCH VÀO BÀI:
+
+① Số trong bài là 474.260 (274.836 logic + 200.940 pairing + 34.888 intrinsic),
+   không phải 487.109. Hai con số này đến từ hai lần đo khác nhau và CHƯA được
+   hoà giải.
+
+② Hợp đồng đã đổi nhiều từ lần đo cuối: bytecode 16.921 → 19.328 byte, và
+   `commitEpoch` thêm cổng aggregator (một SLOAD mảng + vòng quét ngắn).
+
+Đo lại bằng:  cd chain && forge test --match-contract Baselines -vv
+Rồi cập nhật hằng số này TRƯỚC khi chạy scripts/bench_rq.py."""
 
 CLAIM_SETTLEMENT_GAS_BASE = 24_735
 CLAIM_SETTLEMENT_GAS_PER_LEVEL = 514

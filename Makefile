@@ -171,3 +171,6 @@ sp1-sweep:       ## Quét N rồi hồi quy ra f và m
 
 sp1-check-nmt:   ## Kiểm module NMT biên dịch được (hiện CHƯA nối vào luồng)
 	cd sp1_verify/guest && cargo check --features nmt
+
+bench-rq:        ## Sinh số liệu RQ2 (tổng chi phí) và RQ3 (lưới điểm vận hành)
+	python3 scripts/bench_rq.py --out results
