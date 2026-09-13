@@ -26,9 +26,10 @@
 ═══════════════════════════════════════════════════════════════════════════════
 """
 
+import csv
+import json
 import os
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -41,6 +42,13 @@ from engram_common.crypto import keccak  # noqa: E402
 from engram_common.da import make_da  # noqa: E402
 from provider import rust_bridge  # noqa: E402
 from provider.sector import Sector  # noqa: E402
+
+# Kết quả ghi vào <gốc repo>/results, KHÔNG vào /tmp.
+#
+# Bản trước để mọi thứ trong một thư mục tạm, nên chạy xong là mất — vừa không
+# so được hai lần chạy, vừa không có gì để nộp kèm bài. Bằng chứng 13.776 byte
+# là artifact đáng giữ nhất của cả chuỗi.
+RESULTS = Path(os.environ.get("RESULTS_DIR", ROOT / "results"))
 
 N_CHUNKS = int(os.environ.get("ENGRAM_CHUNKS", "16"))
 N_CHALLENGES = int(os.environ.get("ENGRAM_CHALLENGES", "3"))
@@ -58,7 +66,10 @@ def main() -> int:
         print("    cd circuit && cargo build --release -p prover --bin engram_verify")
         return 2
 
-    work = Path(tempfile.mkdtemp(prefix="engram-e2e-"))
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    work = RESULTS / f"e2e-{stamp}"
+    work.mkdir(parents=True, exist_ok=True)
     da = make_da()
     kind = os.environ.get("ENGRAM_DA", "memory")
     print(f"Tầng DA: {kind}   ·   sector {N_CHUNKS} chunk   ·   {N_CHALLENGES} thách thức")
@@ -131,7 +142,44 @@ def main() -> int:
     print(f"Tổng thời gian chuỗi thật: {time.time() - t0:,.1f} giây")
 
     ok = v["verify_ok"] and doi and not v2["verify_ok"]
+
+    # ── LƯU KẾT QUẢ ────────────────────────────────────────────────────────
+    row = {
+        "timestamp": stamp,
+        "da_backend": kind,
+        "n_chunks": N_CHUNKS,
+        "n_challenges": N_CHALLENGES,
+        "sector_bytes": sec.on_disk_bytes,
+        "seal_ms": round(art.seal_ms, 3),
+        "setup_ms": round(art.setup_ms, 3),
+        "prove_ms": round(art.prove_ms, 3),
+        "verify_ms": round(v.get("verify_ms", 0), 3),
+        "proof_bytes": art.proof_bytes,
+        "vk_bytes": (art.out_dir / "vk.bin").stat().st_size,
+        "sealed_root": art.sealed_root,
+        "challenges": str(art.challenges),
+        "verify_tu_DA": v["verify_ok"],
+        "mat_du_lieu_doi_vet": doi,
+        "proof_moi_bi_tu_choi": not v2["verify_ok"],
+        "ket_qua": "DAT" if ok else "KHONG_DAT",
+        "tong_giay": round(time.time() - t0, 1),
+    }
+    (work / "ket_qua.json").write_text(
+        json.dumps(row, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # CSV tích luỹ: mỗi lần chạy một dòng, để so được nhiều cấu hình
+    csv_path = RESULTS / "e2e_real.csv"
+    moi = not csv_path.exists()
+    with csv_path.open("a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if moi:
+            w.writeheader()
+        w.writerow(row)
+
     print(f"\nKẾT QUẢ: {'ĐẠT' if ok else 'KHÔNG ĐẠT'}")
+    print(f"  → {work}/            proof.bin, vk.bin, z0.bin, ket_qua.json")
+    print(f"  → {csv_path}   (một dòng mỗi lần chạy)")
     return 0 if ok else 1
 
 

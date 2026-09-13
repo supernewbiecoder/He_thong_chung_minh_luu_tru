@@ -56,4 +56,7 @@ docker-compose.override.yml
 
 # Logs and runtime files
 *.log
-*.pidresults/
+*.pid
+# Kết quả đo: giữ thư mục và README, bỏ qua dữ liệu
+results/*
+!results/README.md

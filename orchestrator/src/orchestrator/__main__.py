@@ -15,6 +15,8 @@ import os
 import sys
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
 from engram_common.constants import SHA256_SWEEP
 from engram_common.costs import (
     attacker_floor_seconds, capacity_bound_cores, coverage_cost_ratio,
@@ -31,7 +33,11 @@ def main() -> None:
     ap.add_argument("--epochs", type=int, default=int(os.getenv("N_EPOCHS", 3)))
     ap.add_argument("--shards", type=int, default=int(os.getenv("N_SHARDS", 2)))
     ap.add_argument("--workers", type=int, default=60)
-    ap.add_argument("--out", default=os.getenv("RESULTS_DIR", "results"))
+    ap.add_argument(
+        "--out",
+        default=os.getenv("RESULTS_DIR", str(_REPO_ROOT / "results")),
+        help="thư mục kết quả; mặc định <gốc repo>/results",
+    )
     a = ap.parse_args()
 
     # Kiểm quyền ghi TRƯỚC khi chạy, không phải sau.

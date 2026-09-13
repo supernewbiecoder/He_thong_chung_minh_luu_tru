@@ -219,7 +219,10 @@ PROVENANCE = [
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="results")
+    # Neo vào GỐC REPO, không phải thư mục hiện tại. Chạy từ scripts/ hay từ
+    # chỗ khác đều ghi về cùng một nơi — nếu không, kết quả rải rác mỗi lần
+    # một chỗ và không ai biết bảng nào mới.
+    ap.add_argument("--out", default=str(ROOT / "results"))
     ap.add_argument("--sha-cycles", type=int, default=5_000,
                     help="c_sha — CHƯA ĐO, xem [MỞ C2-b]")
     ap.add_argument("--da-latency-s", type=float, default=0.0,
