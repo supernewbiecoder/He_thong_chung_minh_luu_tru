@@ -260,7 +260,7 @@ if __name__ == "__main__":
 
 
 def test_gas_engram_bang_intrinsic_cong_execution():
-    assert C.COMMIT_EPOCH_GAS == 34_888 + 482_042
+    assert C.COMMIT_EPOCH_GAS == 34_888 + 482_301
 
 
 def test_intrinsic_khop_quy_tac_EIP_2028():

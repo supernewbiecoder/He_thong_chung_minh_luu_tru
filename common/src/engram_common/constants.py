@@ -417,15 +417,18 @@ CALLDATA_BYTES = 868
 """[ĐO] 356 + 297 + mào đầu ABI. Đệm ABI làm tròn 297 lên 320 y như 296,
 nên thêm byte này KHÔNG đổi độ dài calldata."""
 
-COMMIT_EPOCH_GAS = 516_930
+COMMIT_EPOCH_GAS = 517_189
 """[ĐO — 13/9/2026, `forge test` trong repo này] Tổng gas một lần `commitEpoch`.
 
     34.888  intrinsic   (21.000 + 868 byte calldata × 16, EIP-2028)
- + 482.042  execution   (gồm ghép cặp Groth16)
+ + 482.301  execution   (gồm ghép cặp Groth16)
  ─────────
-   516.930
+   517.189
 
-Phân rã thêm: logic hợp đồng không tính Groth16 là 281.160.
+Phân rã thêm: logic hợp đồng không tính Groth16 là 281.419.
+
+Số 516.930 đo trước khi chuyển cổng aggregator từ `reportAggregatorTimeout` sang
+`commitEpoch` — đúng chỗ của nó. Cổng tốn 259 gas.
 
 ── HAI CON SỐ CŨ, CẢ HAI ĐỀU SAI ──────────────────────────────────────────
 

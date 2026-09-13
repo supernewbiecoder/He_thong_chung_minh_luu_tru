@@ -248,9 +248,20 @@ contract ProviderEconomicsTest is Test {
     function test_trong_han_chi_nguoi_duoc_chi_dinh_nop_duoc() public {
         vm.prank(agg);
         m.registerAggregator{value: 2 ether}();
+        assertEq(m.designatedAggregator(), agg);
+
+        // DỰNG pv TRƯỚC, prank SAU — đúng bẫy đã cảnh báo ở `_register`.
+        //
+        // `_pv()` gọi `m.snapshotForCurrentEpoch()` và `m.expectedDealCount()`.
+        // Viết `vm.prank(ke_la); m.commitEpoch(1, …, _pv(…))` thì tham số được
+        // tính TRƯỚC lời gọi, nên chính `_pv` ăn mất prank, và `commitEpoch`
+        // chạy với msg.sender = hợp đồng test. Bài kiểm không revert, và triệu
+        // chứng "next call did not revert" KHÔNG hề gợi ra nguyên nhân.
+        bytes memory pv = _pv(1, bytes32(0));
+
         vm.prank(ke_la);
         vm.expectRevert(EngramManager.NotDesignatedAggregator.selector);
-        m.commitEpoch(1, new bytes(356), _pv(1, bytes32(0)));
+        m.commitEpoch(1, new bytes(356), pv);
     }
 
     /// `voidEpoch` trước hạn bị từ chối. Bản trước KHÔNG KIỂM GÌ: ai cũng vô
