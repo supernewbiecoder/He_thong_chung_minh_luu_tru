@@ -52,12 +52,22 @@ ETH_USD = 3000.0
 GWEI = 20.0          # giá gas L2 giả định
 TIA_USD = 0.65
 
-# Thông lượng prover, chu kỳ mỗi giây. Điểm neo thật duy nhất hiện có là lần
-# chạy `make e2e-real` trên máy 1 vCPU; ba mức dưới là để quét trục phần cứng.
+# Thông lượng prover SP1 execute, chu kỳ mỗi giây.
+#
+# [SỬA] Bản trước ghi "1 nhân (neo đo được) = 17e6" — SAI NHÃN. 17e6 là con số
+# anh đặt tạm trước khi có phép đo, và gắn chữ "đo được" vào nó làm bảng RQ3
+# trông như dựa trên số thật.
+#
+# Số ĐO được duy nhất là 76–79 Mcycles/s, lấy từ bốn điểm sweep SP1 execute trên
+# server đầy đủ (13/9/2026). Hai mức còn lại là GIẢ ĐỊNH để quét trục phần cứng,
+# và tên của chúng nói đúng như vậy.
+#
+# LƯU Ý khi đọc: 41,4 % chậm đi khi giới hạn 4 nhân là số đo của Nova/Spartan ở
+# L1, KHÔNG phải của SP1 execute ở L3. Không dùng nó để suy thông lượng SP1.
 PROVER_THROUGHPUT = {
-    "1 nhân (neo đo được)": 17e6,
-    "16 nhân": 200e6,
-    "64 nhân": 700e6,
+    "server đầy đủ (ĐO 78 Mc/s)": 78e6,
+    "×4 (GIẢ ĐỊNH)": 312e6,
+    "×8 (GIẢ ĐỊNH)": 624e6,
 }
 
 
@@ -236,8 +246,9 @@ PROVENANCE = [
      "f + m·N, hồi quy trên BỐN điểm N = 1, 2, 4, 8 bằng SP1 execute "
      "(13/9/2026, sp1-sdk 6.4.0). R² = 1,00000000, sai số từng điểm < 0,0001 %. "
      "Kiểm ngoài mẫu tại N = 5: sai số 3e-5. Mọi N > 8 là NGOẠI SUY"),
-    ("prove_seconds", "MÔ HÌNH", "chu kỳ chia thông lượng prover giả định. "
-     "Điểm neo thật duy nhất: 1 vCPU trong make e2e-real"),
+    ("prove_seconds", "MÔ HÌNH", "chu kỳ chia thông lượng prover. Điểm neo ĐO "
+     "được duy nhất là 78 Mcycles/s (SP1 execute, server đầy đủ, bốn điểm "
+     "sweep); hai mức cao hơn trong rq3_grid.csv là GIẢ ĐỊNH"),
     ("prove_usd", "MÔ HÌNH", "thời gian nhân giá thuê máy giả định"),
     ("cell_cycles_e9", "ĐO rồi NGOẠI SUY", "như prove_cycles_e9 — đo tới N = 8"),
     ("t_worker_h / t_agg_h", "MÔ HÌNH", "chu kỳ chia thông lượng"),
@@ -267,7 +278,7 @@ def main() -> int:
 
     n_list = [1, 2, 3, 5, 10, 20, 50, 100, 500, 1_000, 10_000]
     rows2 = rq2_rows(n_list, a.sha_cycles,
-                     PROVER_THROUGHPUT["16 nhân"], a.prover_usd_h)
+                     PROVER_THROUGHPUT["×4 (GIẢ ĐỊNH)"], a.prover_usd_h)
     _write(out / "rq2_total_cost.csv", rows2)
 
     rows3 = rq3_rows([1_000, 10_000], [1, 2, 4, 8, 16, 32],
