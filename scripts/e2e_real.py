@@ -59,6 +59,18 @@ def line(ch="─"):
     print(ch * 78)
 
 
+def _so_nhan() -> int:
+    """Số nhân tiến trình này được phép chạy trên.
+
+    `os.cpu_count()` trả số nhân của MÁY, không đổi khi bị `taskset` giới hạn.
+    `sched_getaffinity` mới là con số đúng.
+    """
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:          # không phải Linux
+        return os.cpu_count() or 0
+
+
 def main() -> int:
     if not rust_bridge.available():
         print("Chưa build mạch Rust. Chạy:")
@@ -168,6 +180,11 @@ def main() -> int:
     row = {
         "timestamp": stamp,
         "da_backend": kind,
+        # [THÊM] Số nhân THỰC SỰ dùng được, đọc qua sched_getaffinity nên nó
+        # phản ánh đúng `taskset`. Không có cột này thì dòng chạy 4 nhân trông
+        # y hệt dòng toàn nhân, và bảng so phần cứng không tách được hai lần
+        # chạy — đúng vấn đề gặp ở lần đo 256 chunk.
+        "cores": _so_nhan(),
         "n_chunks": N_CHUNKS,
         "n_challenges": N_CHALLENGES,
         "sector_bytes": sec.on_disk_bytes,

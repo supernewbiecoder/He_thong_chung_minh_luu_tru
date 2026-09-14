@@ -232,12 +232,14 @@ PROVENANCE = [
      "B1 chỉ tính intrinsic nên thiên vị baseline, so sánh là bảo thủ"),
     ("da_usd", "TÍNH", "pfb_gas() theo quy tắc Celestia; ba đầu vào là GIẢ ĐỊNH: "
      "phí cố định 65.000, giá gas 0,002 utia, giá TIA 0,65 $. CHƯA đo trên devnet"),
-    ("prove_cycles_e9", "ĐO rồi NGOẠI SUY", "f + m·N, hồi quy trên ba điểm "
-     "N = 1,2,3 bằng SP1 execute. Mọi N > 3 là ngoại suy"),
+    ("prove_cycles_e9", "ĐO rồi NGOẠI SUY",
+     "f + m·N, hồi quy trên BỐN điểm N = 1, 2, 4, 8 bằng SP1 execute "
+     "(13/9/2026, sp1-sdk 6.4.0). R² = 1,00000000, sai số từng điểm < 0,0001 %. "
+     "Kiểm ngoài mẫu tại N = 5: sai số 3e-5. Mọi N > 8 là NGOẠI SUY"),
     ("prove_seconds", "MÔ HÌNH", "chu kỳ chia thông lượng prover giả định. "
      "Điểm neo thật duy nhất: 1 vCPU trong make e2e-real"),
     ("prove_usd", "MÔ HÌNH", "thời gian nhân giá thuê máy giả định"),
-    ("cell_cycles_e9", "ĐO rồi NGOẠI SUY", "như prove_cycles_e9"),
+    ("cell_cycles_e9", "ĐO rồi NGOẠI SUY", "như prove_cycles_e9 — đo tới N = 8"),
     ("t_worker_h / t_agg_h", "MÔ HÌNH", "chu kỳ chia thông lượng"),
     ("da_latency_s", "CHƯA ĐO", "chỉ đo được trên devnet Celestia; tham số đầu vào"),
     ("budget_h", "SUY TỪ LỊCH", "28.800 − 14.305 block. Đây là ĐÍNH CHÍNH: "
