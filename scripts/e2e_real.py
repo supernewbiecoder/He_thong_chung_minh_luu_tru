@@ -206,11 +206,34 @@ def main() -> int:
         json.dumps(row, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
-    # CSV tích luỹ: mỗi lần chạy một dòng, để so được nhiều cấu hình
+    # CSV tích luỹ: mỗi lần chạy một dòng, để so được nhiều cấu hình.
+    #
+    # ── [SỬA] HEADER ĐỔI THÌ PHẢI XOAY FILE, KHÔNG ĐƯỢC GHI ĐÈ TIẾP ────────
+    #
+    # Bản trước chỉ ghi header khi file chưa tồn tại. Thêm một cột — ở đây là
+    # `cores` — thì dòng mới có nhiều trường hơn header cũ, và `DictWriter` vẫn
+    # ghi bình thường. Kết quả là MỌI CỘT SAU ĐÓ LỆCH MỘT Ô: cột `n_chunks` đọc
+    # ra số nhân, `n_challenges` đọc ra số chunk. Không có lỗi, không có cảnh
+    # báo, chỉ có một bảng sai.
+    #
+    # Giờ so header hiện có với tập trường; khác nhau thì đổi tên file cũ và bắt
+    # đầu file mới. Mất một file là chuyện nhỏ; một bảng lệch cột mà không ai
+    # biết thì không.
     csv_path = RESULTS / "e2e_real.csv"
+    fields = list(row.keys())
+
+    if csv_path.exists():
+        with csv_path.open(newline="", encoding="utf-8") as f:
+            cu = next(csv.reader(f), [])
+        if cu != fields:
+            luu = csv_path.with_suffix(f".{stamp}.csv")
+            csv_path.rename(luu)
+            print(f"   ⚠ header đổi ({len(cu)} → {len(fields)} cột); "
+                  f"file cũ đổi tên thành {luu.name}")
+
     moi = not csv_path.exists()
     with csv_path.open("a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=list(row.keys()))
+        w = csv.DictWriter(f, fieldnames=fields)
         if moi:
             w.writeheader()
         w.writerow(row)
